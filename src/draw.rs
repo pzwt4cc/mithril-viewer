@@ -71,6 +71,17 @@ impl Canvas<'_> {
         );
     }
 
+    pub fn round_rect(&mut self, x: f32, y: f32, w: f32, h: f32, r: f32, c: Rgb) {
+        let (cx, cy) = (x + w / 2.0, y + h / 2.0);
+        let (hx, hy) = (w / 2.0 - r, h / 2.0 - r);
+        self.shape(x - 1.0, y - 1.0, x + w + 1.0, y + h + 1.0, c, |px, py| {
+            let qx = (px - cx).abs() - hx;
+            let qy = (py - cy).abs() - hy;
+            let d = (qx.max(0.0).powi(2) + qy.max(0.0).powi(2)).sqrt() + qx.max(qy).min(0.0) - r;
+            (0.5 - d).clamp(0.0, 1.0)
+        });
+    }
+
     pub fn ring(&mut self, cx: f32, cy: f32, r: f32, t: f32, c: Rgb) {
         let o = r + t + 1.0;
         self.shape(cx - o, cy - o, cx + o, cy + o, c, |x, y| {

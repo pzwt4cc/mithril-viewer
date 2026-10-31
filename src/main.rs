@@ -1,10 +1,15 @@
 mod draw;
+mod info;
 
-use std::{num::NonZeroU32, path::PathBuf, rc::Rc};
+use std::{
+    num::NonZeroU32,
+    path::{Path, PathBuf},
+    rc::Rc,
+};
 
 use fontdue::{Font, FontSettings};
 use image::{
-    RgbaImage,
+    ImageFormat, RgbaImage,
     imageops::{self, FilterType},
 };
 use winit::{
@@ -17,21 +22,28 @@ use winit::{
 };
 
 use draw::{Canvas, Rgb, ellipsize, text_width};
+use info::{Info, labels};
 
 type Surface = softbuffer::Surface<Rc<Window>, Rc<Window>>;
 
 const BG: Rgb = [0x1e, 0x1e, 0x1e];
 const HEADER: Rgb = [0x2a, 0x2a, 0x2a];
 const SIDEBAR: Rgb = [0x26, 0x26, 0x26];
+const CARD: Rgb = [0x31, 0x31, 0x31];
 const BORDER: Rgb = [0x3a, 0x3a, 0x3a];
-const HOVER: Rgb = [0x3d, 0x3d, 0x3d];
+const HOVER: Rgb = [0x3f, 0x3f, 0x3f];
 const ACTIVE: Rgb = [0x4d, 0x4d, 0x4d];
 const TEXT: Rgb = [0xee, 0xee, 0xee];
+const DIM: Rgb = [0x9a, 0x9a, 0x9a];
 
 const HEADER_H: f32 = 46.0;
 const SIDEBAR_W: f32 = 300.0;
 const BTN_R: f32 = 14.0;
 const EDGE: f32 = 5.0;
+const PAD: f32 = 12.0;
+const GAP: f32 = 12.0;
+const ROW_H: f32 = 54.0;
+const CARD_ROWS: [usize; 4] = [1, 1, 3, 2];
 
 fn fit_scale((iw, ih): (u32, u32), (w, h): (u32, u32)) -> f32 {
     (w as f32 / iw as f32).min(h as f32 / ih as f32).min(1.0)
@@ -61,6 +73,7 @@ impl View {
 enum Hit {
     Info,
     Close,
+    OpenFolder,
 }
 
 struct Layout {
@@ -102,6 +115,26 @@ impl Layout {
         (x - 36.0 * self.scale, y)
     }
 
+    fn card_x(&self) -> f32 {
+        (self.win.0 as i32 - self.sidebar_w) as f32 + PAD * self.scale
+    }
+
+    fn card_w(&self) -> f32 {
+        self.sidebar_w as f32 - 2.0 * PAD * self.scale
+    }
+
+    fn card_y(&self, n: usize) -> f32 {
+        let rows_before: usize = CARD_ROWS[..n].iter().sum();
+        self.header_h as f32 + (PAD + n as f32 * GAP + rows_before as f32 * ROW_H) * self.scale
+    }
+
+    fn folder_btn_center(&self) -> (f32, f32) {
+        (
+            self.card_x() + self.card_w() - 26.0 * self.scale,
+            self.card_y(1) + ROW_H * self.scale / 2.0,
+        )
+    }
+
     fn hit(&self, p: (f64, f64)) -> Option<Hit> {
         let r = (BTN_R * self.scale) as f64;
         let near =
@@ -110,6 +143,8 @@ impl Layout {
             Some(Hit::Close)
         } else if near(self.info_center()) {
             Some(Hit::Info)
+        } else if self.sidebar_w > 0 && near(self.folder_btn_center()) {
+            Some(Hit::OpenFolder)
         } else {
             None
         }
@@ -170,12 +205,32 @@ fn draw_image(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
+fn draw_row(
+    cv: &mut Canvas,
+    font: &Font,
+    x: f32,
+    y: f32,
+    w: f32,
+    s: f32,
+    label: &str,
+    value: &str,
+    right_pad: f32,
+) {
+    cv.text(font, label, x + 14.0 * s, y + 21.0 * s, 12.0 * s, DIM);
+    let vpx = 14.0 * s;
+    let max_w = (w - 28.0 * s - right_pad).max(0.0);
+    let v = ellipsize(font, value, vpx, max_w);
+    cv.text(font, &v, x + 14.0 * s, y + 41.0 * s, vpx, TEXT);
+}
+
 struct App {
     font: Font,
     window: Option<Rc<Window>>,
     context: Option<softbuffer::Context<Rc<Window>>>,
     surface: Option<Surface>,
     path: Option<PathBuf>,
+    info: Option<Info>,
     image: Option<RgbaImage>,
     scaled: Option<RgbaImage>,
     view: View,
@@ -194,6 +249,7 @@ impl App {
             context: None,
             surface: None,
             path: None,
+            info: None,
             image: None,
             scaled: None,
             view: View::default(),
@@ -219,6 +275,18 @@ impl App {
             w.scale_factor() as f32,
             self.sidebar_open,
         ))
+    }
+
+    fn open_folder(&self) {
+        let Some(info) = &self.info else { return };
+        if let Ok(mut child) = std::process::Command::new("xdg-open")
+            .arg(&info.folder_path)
+            .spawn()
+        {
+            std::thread::spawn(move || {
+                let _ = child.wait();
+            });
+        }
     }
 
     fn zoom_at_cursor(&mut self, steps: f32) {
@@ -340,11 +408,64 @@ impl App {
             );
         }
 
+        let r = BTN_R * s;
+
         if lay.sidebar_w > 0 {
             let x = w as i32 - lay.sidebar_w;
             let sh = h as i32 - lay.header_h;
             cv.fill_rect(x, lay.header_h, lay.sidebar_w, sh, SIDEBAR);
             cv.fill_rect(x, lay.header_h, 1, sh, BORDER);
+
+            if let Some(info) = &self.info {
+                let lb = labels();
+                let cards: [Vec<(&str, &str)>; 4] = [
+                    vec![(lb.name, info.name.as_str())],
+                    vec![(lb.folder, info.folder.as_str())],
+                    vec![
+                        (lb.resolution, info.resolution.as_str()),
+                        (lb.format, info.format.as_str()),
+                        (lb.size, info.size.as_str()),
+                    ],
+                    vec![
+                        (lb.created, info.created.as_str()),
+                        (lb.modified, info.modified.as_str()),
+                    ],
+                ];
+                let (cx0, cw) = (lay.card_x(), lay.card_w());
+                for (n, rows) in cards.iter().enumerate() {
+                    let y0 = lay.card_y(n);
+                    let ch = rows.len() as f32 * ROW_H * s;
+                    cv.round_rect(cx0, y0, cw, ch, 10.0 * s, CARD);
+                    for (i, (label, value)) in rows.iter().enumerate() {
+                        let ry = y0 + i as f32 * ROW_H * s;
+                        if i > 0 {
+                            cv.fill_rect(
+                                (cx0 + 14.0 * s) as i32,
+                                ry as i32,
+                                (cw - 28.0 * s) as i32,
+                                1,
+                                BORDER,
+                            );
+                        }
+                        let right_pad = if n == 1 { 44.0 * s } else { 0.0 };
+                        draw_row(&mut cv, &self.font, cx0, ry, cw, s, label, value, right_pad);
+                    }
+                }
+
+                let (fx, fy) = lay.folder_btn_center();
+                if self.hover == Some(Hit::OpenFolder) {
+                    cv.circle(fx, fy, r, HOVER);
+                }
+                cv.round_rect(
+                    fx - 7.0 * s,
+                    fy - 3.5 * s,
+                    14.0 * s,
+                    10.0 * s,
+                    2.0 * s,
+                    TEXT,
+                );
+                cv.round_rect(fx - 7.0 * s, fy - 6.5 * s, 6.0 * s, 4.0 * s, 1.5 * s, TEXT);
+            }
         }
 
         cv.fill_rect(0, 0, w as i32, lay.header_h, HEADER);
@@ -360,8 +481,6 @@ impl App {
                 cv.text(&self.font, &text, (w as f32 - tw) / 2.0, baseline, px, TEXT);
             }
         }
-
-        let r = BTN_R * s;
 
         let (ix, iy) = lay.info_center();
         if self.sidebar_open {
@@ -459,6 +578,7 @@ impl ApplicationHandler for App {
                         self.sidebar_open = !self.sidebar_open;
                         self.redraw();
                     }
+                    Some(Hit::OpenFolder) => self.open_folder(),
                     None if self.cursor.1 < lay.header_h as f64 => {
                         let _ = window.drag_window();
                     }
@@ -484,6 +604,14 @@ impl ApplicationHandler for App {
     }
 }
 
+fn load(path: &Path) -> Result<(RgbaImage, Option<ImageFormat>, bool), Box<dyn std::error::Error>> {
+    let reader = image::ImageReader::open(path)?.with_guessed_format()?;
+    let format = reader.format();
+    let img = reader.decode()?;
+    let has_alpha = img.color().has_alpha();
+    Ok((img.to_rgba8(), format, has_alpha))
+}
+
 fn main() {
     let font = Font::from_bytes(
         &include_bytes!("../assets/InterVariable.ttf")[..],
@@ -494,9 +622,10 @@ fn main() {
     let mut app = App::new(font);
 
     if let Some(path) = std::env::args_os().nth(1).map(PathBuf::from) {
-        match image::open(&path) {
-            Ok(img) => {
-                app.image = Some(img.to_rgba8());
+        match load(&path) {
+            Ok((img, format, has_alpha)) => {
+                app.info = Some(Info::gather(&path, img.dimensions(), format, has_alpha));
+                app.image = Some(img);
                 app.path = Some(path);
             }
             Err(e) => eprintln!("mithril: {}: {e}", path.display()),
