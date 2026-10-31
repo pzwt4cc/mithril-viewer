@@ -1,3 +1,4 @@
+mod anim;
 mod draw;
 mod gpu;
 mod info;
@@ -12,11 +13,12 @@ use winit::{
     application::ApplicationHandler,
     dpi::LogicalSize,
     event::{MouseButton, MouseScrollDelta, WindowEvent},
-    event_loop::{ActiveEventLoop, EventLoop},
+    event_loop::{ActiveEventLoop, ControlFlow, EventLoop},
     keyboard::{KeyCode, PhysicalKey},
     window::{CursorIcon, ResizeDirection, Window, WindowId},
 };
 
+use anim::Anim;
 use draw::{Canvas, Rgb, ellipsize, lerp, text_width};
 use gpu::Gpu;
 use info::{Info, labels};
@@ -281,6 +283,7 @@ struct App {
     path: Option<PathBuf>,
     info: Option<Info>,
     image: Option<RgbaImage>,
+    anim: Option<Anim>,
     view: View,
     cursor: (f64, f64),
     dragging: bool,
@@ -308,6 +311,7 @@ impl App {
             path: None,
             info: None,
             image: None,
+            anim: None,
             view: View::default(),
             cursor: (0.0, 0.0),
             dragging: false,
@@ -399,7 +403,9 @@ impl App {
         } else {
             imageops::rotate270(&img)
         };
-        if let Some(gpu) = &mut self.gpu {
+        if let Some(anim) = &mut self.anim {
+            anim.rotate(clockwise);
+        } else if let Some(gpu) = &mut self.gpu {
             gpu.set_image(&rotated);
         }
         self.image = Some(rotated);
@@ -688,6 +694,11 @@ impl App {
         }
 
         let Some(gpu) = self.gpu.as_mut() else { return };
+        if let Some(anim) = &mut self.anim {
+            if let Some(frame) = anim.take_dirty() {
+                gpu.set_image(frame);
+            }
+        }
         if let Some(hb) = &header {
             gpu.set_header(hb, w, hh);
         }
@@ -769,6 +780,19 @@ impl ApplicationHandler for App {
                 el.exit();
             }
         }
+    }
+
+    fn about_to_wait(&mut self, el: &ActiveEventLoop) {
+        let Some(anim) = self.anim.as_mut() else {
+            el.set_control_flow(ControlFlow::Wait);
+            return;
+        };
+        let changed = anim.tick(Instant::now());
+        let next = anim.next_at();
+        if changed {
+            self.redraw();
+        }
+        el.set_control_flow(ControlFlow::WaitUntil(next));
     }
 
     fn window_event(&mut self, el: &ActiveEventLoop, _: WindowId, event: WindowEvent) {
@@ -927,6 +951,7 @@ fn main() {
                     l.has_alpha,
                 ));
                 app.image = Some(l.image);
+                app.anim = l.anim;
                 app.path = Some(path);
             }
             Err(e) => eprintln!("mithril: {}: {e}", path.display()),
