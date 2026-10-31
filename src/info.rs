@@ -16,7 +16,7 @@ pub struct Labels {
     transparent: &'static str,
     unknown: &'static str,
     units: [&'static str; 4],
-    ru: bool,
+    pub ru: bool,
 }
 
 static EN: Labels = Labels {

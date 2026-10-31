@@ -64,6 +64,7 @@ pub struct Gpu {
     image: Option<Tex>,
     header: Option<Tex>,
     sidebar: Option<Tex>,
+    menu: Option<Tex>,
 }
 
 impl Gpu {
@@ -131,6 +132,7 @@ impl Gpu {
             image: None,
             header: None,
             sidebar: None,
+            menu: None,
         };
         Ok((Rc::new(window), gpu))
     }
@@ -239,6 +241,25 @@ impl Gpu {
 
     pub fn draw_sidebar(&self, x: i32, y: i32) {
         if let Some(tex) = &self.sidebar {
+            self.quad(tex, (x as f32, y as f32, tex.w as f32, tex.h as f32));
+        }
+    }
+
+    pub fn set_menu(&mut self, px: &[u32], w: u32, h: u32) {
+        unsafe {
+            upload(
+                &self.gl,
+                &mut self.menu,
+                w as i32,
+                h as i32,
+                &to_rgba(px),
+                false,
+            )
+        }
+    }
+
+    pub fn draw_menu(&self, x: i32, y: i32) {
+        if let Some(tex) = &self.menu {
             self.quad(tex, (x as f32, y as f32, tex.w as f32, tex.h as f32));
         }
     }

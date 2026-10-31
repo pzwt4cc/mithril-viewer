@@ -1,6 +1,7 @@
 mod draw;
 mod gpu;
 mod info;
+mod menu;
 
 use std::{
     path::{Path, PathBuf},
@@ -8,7 +9,7 @@ use std::{
 };
 
 use fontdue::{Font, FontSettings};
-use image::{ImageFormat, RgbaImage};
+use image::{ImageFormat, RgbaImage, imageops};
 use winit::{
     application::ApplicationHandler,
     dpi::LogicalSize,
@@ -21,6 +22,7 @@ use winit::{
 use draw::{Canvas, Rgb, ellipsize, text_width};
 use gpu::Gpu;
 use info::{Info, labels};
+use menu::{Action, ITEMS, Menu};
 
 const BG: Rgb = [0x1e, 0x1e, 0x1e];
 const HEADER: Rgb = [0x2a, 0x2a, 0x2a];
@@ -206,10 +208,13 @@ struct App {
     view: View,
     cursor: (f64, f64),
     dragging: bool,
+    shift: bool,
     sidebar_open: bool,
     hover: Option<Hit>,
     cursor_icon: CursorIcon,
+    menu: Option<Menu>,
     ui_dirty: bool,
+    menu_dirty: bool,
 }
 
 impl App {
@@ -224,10 +229,13 @@ impl App {
             view: View::default(),
             cursor: (0.0, 0.0),
             dragging: false,
+            shift: false,
             sidebar_open: false,
             hover: None,
             cursor_icon: CursorIcon::Default,
+            menu: None,
             ui_dirty: true,
+            menu_dirty: false,
         }
     }
 
@@ -257,6 +265,47 @@ impl App {
                 let _ = child.wait();
             });
         }
+    }
+
+    fn open_menu(&mut self) {
+        let Some(lay) = self.layout() else { return };
+        let mut menu = Menu::new(self.cursor, lay.win, lay.scale);
+        menu.hover = menu.item_at(self.cursor);
+        self.menu = Some(menu);
+        self.menu_dirty = true;
+        self.redraw();
+    }
+
+    fn close_menu(&mut self) {
+        if self.menu.take().is_some() {
+            self.redraw();
+        }
+    }
+
+    fn apply(&mut self, action: Action) {
+        match action {
+            Action::ResetZoom => {
+                self.view = View::default();
+                self.redraw();
+            }
+            Action::RotateLeft => self.rotate(false),
+            Action::RotateRight => self.rotate(true),
+        }
+    }
+
+    fn rotate(&mut self, clockwise: bool) {
+        let Some(img) = self.image.take() else { return };
+        let rotated = if clockwise {
+            imageops::rotate90(&img)
+        } else {
+            imageops::rotate270(&img)
+        };
+        if let Some(gpu) = &mut self.gpu {
+            gpu.set_image(&rotated);
+        }
+        self.image = Some(rotated);
+        self.view = View::default();
+        self.redraw();
     }
 
     fn zoom_at_cursor(&mut self, steps: f32) {
@@ -466,12 +515,35 @@ impl App {
             }
         }
 
+        let mut menu_buf = None;
+        if self.menu_dirty {
+            self.menu_dirty = false;
+            if let Some(menu) = &self.menu {
+                let (mw, mh) = (menu.w as u32, menu.h as u32);
+                let mut mb = vec![0u32; (mw * mh) as usize];
+                menu.draw(
+                    &mut Canvas {
+                        px: &mut mb,
+                        w: mw,
+                        h: mh,
+                        ox: menu.x,
+                        oy: menu.y,
+                    },
+                    &self.font,
+                );
+                menu_buf = Some((mb, mw, mh));
+            }
+        }
+
         let Some(gpu) = self.gpu.as_mut() else { return };
         if let Some(hb) = &header {
             gpu.set_header(hb, w, hh);
         }
         if let Some((sb, sw, sh)) = &sidebar {
             gpu.set_sidebar(sb, *sw, *sh);
+        }
+        if let Some((mb, mw, mh)) = &menu_buf {
+            gpu.set_menu(mb, *mw, *mh);
         }
 
         gpu.begin(w, h, BG);
@@ -498,6 +570,9 @@ impl App {
             gpu.draw_sidebar(w as i32 - lay.sidebar_w, lay.header_h);
         }
         gpu.draw_header();
+        if let Some(menu) = &self.menu {
+            gpu.draw_menu(menu.x, menu.y);
+        }
         gpu.present();
     }
 }
@@ -539,14 +614,25 @@ impl ApplicationHandler for App {
     fn window_event(&mut self, el: &ActiveEventLoop, _: WindowId, event: WindowEvent) {
         match event {
             WindowEvent::CloseRequested => el.exit(),
+            WindowEvent::ModifiersChanged(m) => self.shift = m.state().shift_key(),
             WindowEvent::KeyboardInput { event, .. }
                 if event.state.is_pressed() && !event.repeat =>
             {
                 match event.physical_key {
-                    PhysicalKey::Code(KeyCode::Escape) => el.exit(),
+                    PhysicalKey::Code(KeyCode::Escape) => {
+                        if self.menu.is_some() {
+                            self.close_menu();
+                        } else {
+                            el.exit();
+                        }
+                    }
                     PhysicalKey::Code(KeyCode::Digit0) | PhysicalKey::Code(KeyCode::Numpad0) => {
-                        self.view = View::default();
-                        self.redraw();
+                        self.close_menu();
+                        self.apply(Action::ResetZoom);
+                    }
+                    PhysicalKey::Code(KeyCode::KeyR) => {
+                        self.close_menu();
+                        self.rotate(!self.shift);
                     }
                     PhysicalKey::Code(KeyCode::KeyI) => {
                         self.sidebar_open = !self.sidebar_open;
@@ -568,6 +654,10 @@ impl ApplicationHandler for App {
                 self.redraw();
             }
             WindowEvent::MouseWheel { delta, .. } => {
+                if self.menu.is_some() {
+                    self.close_menu();
+                    return;
+                }
                 let steps = match delta {
                     MouseScrollDelta::LineDelta(_, y) => y,
                     MouseScrollDelta::PixelDelta(p) => p.y as f32 / 40.0,
@@ -576,11 +666,37 @@ impl ApplicationHandler for App {
             }
             WindowEvent::MouseInput {
                 state,
+                button: MouseButton::Right,
+                ..
+            } if state.is_pressed() => {
+                let Some(lay) = self.layout() else { return };
+                let (vx, vy, vw, vh) = lay.viewport();
+                let (px, py) = self.cursor;
+                let inside = px >= vx as f64
+                    && px < (vx + vw as i32) as f64
+                    && py >= vy as f64
+                    && py < (vy + vh as i32) as f64;
+                if inside && self.image.is_some() {
+                    self.open_menu();
+                } else {
+                    self.close_menu();
+                }
+            }
+            WindowEvent::MouseInput {
+                state,
                 button: MouseButton::Left,
                 ..
             } => {
                 if !state.is_pressed() {
                     self.dragging = false;
+                    return;
+                }
+                if self.menu.is_some() {
+                    let item = self.menu.as_ref().and_then(|m| m.item_at(self.cursor));
+                    self.close_menu();
+                    if let Some(i) = item {
+                        self.apply(ITEMS[i]);
+                    }
                     return;
                 }
                 let (Some(window), Some(lay)) = (self.window.clone(), self.layout()) else {
@@ -617,6 +733,20 @@ impl ApplicationHandler for App {
                     self.redraw();
                 }
                 self.cursor = new;
+
+                let mut changed = false;
+                if let Some(menu) = &mut self.menu {
+                    let item = menu.item_at(new);
+                    if item != menu.hover {
+                        menu.hover = item;
+                        changed = true;
+                    }
+                }
+                if changed {
+                    self.menu_dirty = true;
+                    self.redraw();
+                }
+
                 self.update_pointer();
             }
             WindowEvent::RedrawRequested => self.render(),
