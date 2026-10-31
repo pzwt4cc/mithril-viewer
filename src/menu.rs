@@ -1,8 +1,8 @@
 use fontdue::Font;
 
 use crate::{
-    BORDER, DIM, HOVER, TEXT,
-    draw::{Canvas, Rgb, text_width},
+    BORDER, DIM, Fade, HOVER, TEXT,
+    draw::{Canvas, Rgb, lerp, text_width},
     info::labels,
 };
 
@@ -57,6 +57,8 @@ pub struct Menu {
     pub w: i32,
     pub h: i32,
     pub hover: Option<usize>,
+    pub appear: Fade,
+    fades: [Fade; 3],
     scale: f32,
 }
 
@@ -72,8 +74,25 @@ impl Menu {
             w,
             h,
             hover: None,
+            appear: Fade { v: 0.0, to: 1.0 },
+            fades: [Fade::new(0.0); 3],
             scale,
         }
+    }
+
+    pub fn set_hover(&mut self, item: Option<usize>) {
+        self.hover = item;
+        for (i, f) in self.fades.iter_mut().enumerate() {
+            f.to = if item == Some(i) { 1.0 } else { 0.0 };
+        }
+    }
+
+    pub fn step(&mut self, dt: f32) -> bool {
+        let mut moved = self.appear.step(dt, 20.0);
+        for f in self.fades.iter_mut() {
+            moved |= f.step(dt, 24.0);
+        }
+        moved
     }
 
     pub fn item_at(&self, p: (f64, f64)) -> Option<usize> {
@@ -103,8 +122,9 @@ impl Menu {
             let iy = self.y as f32 + (MENU_PAD + i as f32 * ITEM_H) * s;
             let iw = self.w as f32 - 2.0 * MENU_PAD * s;
             let ih = ITEM_H * s;
-            if self.hover == Some(i) {
-                cv.round_rect(ix, iy, iw, ih, 6.0 * s, HOVER);
+            let f = self.fades[i].v;
+            if f > 0.01 {
+                cv.round_rect(ix, iy, iw, ih, 6.0 * s, lerp(MENU_BG, HOVER, f));
             }
             let baseline = iy + ih / 2.0 + (lm.ascent + lm.descent) / 2.0;
             let (text, hint) = label(a);

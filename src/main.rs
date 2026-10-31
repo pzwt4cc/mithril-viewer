@@ -4,8 +4,10 @@ mod info;
 mod menu;
 
 use std::{
+    f32::consts::FRAC_PI_2,
     path::{Path, PathBuf},
     rc::Rc,
+    time::Instant,
 };
 
 use fontdue::{Font, FontSettings};
@@ -19,7 +21,7 @@ use winit::{
     window::{CursorIcon, ResizeDirection, Window, WindowId},
 };
 
-use draw::{Canvas, Rgb, ellipsize, text_width};
+use draw::{Canvas, Rgb, ellipsize, lerp, text_width};
 use gpu::Gpu;
 use info::{Info, labels};
 use menu::{Action, ITEMS, Menu};
@@ -43,6 +45,31 @@ const GAP: f32 = 12.0;
 const ROW_H: f32 = 54.0;
 const CARD_ROWS: [usize; 4] = [1, 1, 3, 2];
 
+#[derive(Clone, Copy)]
+struct Fade {
+    v: f32,
+    to: f32,
+}
+
+impl Fade {
+    fn new(v: f32) -> Self {
+        Self { v, to: v }
+    }
+
+    fn step(&mut self, dt: f32, speed: f32) -> bool {
+        let d = self.to - self.v;
+        if d == 0.0 {
+            return false;
+        }
+        if d.abs() < 0.003 {
+            self.v = self.to;
+            return true;
+        }
+        self.v += d * (1.0 - (-dt * speed).exp());
+        true
+    }
+}
+
 fn fit_scale((iw, ih): (u32, u32), (w, h): (u32, u32)) -> f32 {
     (w as f32 / iw as f32).min(h as f32 / ih as f32).min(1.0)
 }
@@ -51,11 +78,18 @@ fn fit_scale((iw, ih): (u32, u32), (w, h): (u32, u32)) -> f32 {
 struct View {
     zoom: Option<f32>,
     pan: (f32, f32),
+    cur_scale: f32,
+    cur_pan: (f32, f32),
 }
 
 impl View {
     fn scale(&self, img: (u32, u32), vp: (u32, u32)) -> f32 {
         self.zoom.unwrap_or_else(|| fit_scale(img, vp))
+    }
+
+    fn reset(&mut self) {
+        self.zoom = None;
+        self.pan = (0.0, 0.0);
     }
 
     fn clamp_pan(&mut self, img: (u32, u32), vp: (u32, u32)) {
@@ -64,6 +98,47 @@ impl View {
         let max_y = ((img.1 as f32 * s - vp.1 as f32) / 2.0).max(0.0);
         self.pan.0 = self.pan.0.clamp(-max_x, max_x);
         self.pan.1 = self.pan.1.clamp(-max_y, max_y);
+    }
+
+    fn step(&mut self, img: (u32, u32), vp: (u32, u32), dt: f32, snap: bool) -> bool {
+        let ts = self.scale(img, vp);
+        if snap || self.cur_scale <= 0.0 {
+            let changed = self.cur_scale != ts || self.cur_pan != self.pan;
+            self.cur_scale = ts;
+            self.cur_pan = self.pan;
+            return changed;
+        }
+        let a = 1.0 - (-dt * 18.0).exp();
+        let mut moving = false;
+
+        let ds = ts - self.cur_scale;
+        if ds != 0.0 {
+            moving = true;
+            if ds.abs() < ts * 0.0005 {
+                self.cur_scale = ts;
+            } else {
+                self.cur_scale += ds * a;
+            }
+        }
+        let dx = self.pan.0 - self.cur_pan.0;
+        if dx != 0.0 {
+            moving = true;
+            if dx.abs() < 0.25 {
+                self.cur_pan.0 = self.pan.0;
+            } else {
+                self.cur_pan.0 += dx * a;
+            }
+        }
+        let dy = self.pan.1 - self.cur_pan.1;
+        if dy != 0.0 {
+            moving = true;
+            if dy.abs() < 0.25 {
+                self.cur_pan.1 = self.pan.1;
+            } else {
+                self.cur_pan.1 += dy * a;
+            }
+        }
+        moving
     }
 }
 
@@ -74,24 +149,29 @@ enum Hit {
     OpenFolder,
 }
 
+impl Hit {
+    fn index(self) -> usize {
+        self as usize
+    }
+}
+
 struct Layout {
     scale: f32,
     win: (u32, u32),
     header_h: i32,
     sidebar_w: i32,
+    sidebar_full: i32,
 }
 
 impl Layout {
-    fn new(win: (u32, u32), scale: f32, sidebar: bool) -> Self {
+    fn new(win: (u32, u32), scale: f32, frac: f32) -> Self {
+        let full = (SIDEBAR_W * scale).round() as i32;
         Self {
             scale,
             win,
             header_h: (HEADER_H * scale).round() as i32,
-            sidebar_w: if sidebar {
-                (SIDEBAR_W * scale).round() as i32
-            } else {
-                0
-            },
+            sidebar_w: (full as f32 * frac).round() as i32,
+            sidebar_full: full,
         }
     }
 
@@ -114,11 +194,11 @@ impl Layout {
     }
 
     fn card_x(&self) -> f32 {
-        (self.win.0 as i32 - self.sidebar_w) as f32 + PAD * self.scale
+        (self.win.0 as i32 - self.sidebar_full) as f32 + PAD * self.scale
     }
 
     fn card_w(&self) -> f32 {
-        self.sidebar_w as f32 - 2.0 * PAD * self.scale
+        self.sidebar_full as f32 - 2.0 * PAD * self.scale
     }
 
     fn card_y(&self, n: usize) -> f32 {
@@ -141,7 +221,7 @@ impl Layout {
             Some(Hit::Close)
         } else if near(self.info_center()) {
             Some(Hit::Info)
-        } else if self.sidebar_w > 0 && near(self.folder_btn_center()) {
+        } else if self.sidebar_w == self.sidebar_full && near(self.folder_btn_center()) {
             Some(Hit::OpenFolder)
         } else {
             None
@@ -209,12 +289,18 @@ struct App {
     cursor: (f64, f64),
     dragging: bool,
     shift: bool,
-    sidebar_open: bool,
+    side: Fade,
     hover: Option<Hit>,
+    fades: [Fade; 3],
+    appear: Fade,
+    angle: Fade,
     cursor_icon: CursorIcon,
     menu: Option<Menu>,
-    ui_dirty: bool,
+    header_dirty: bool,
+    sidebar_dirty: bool,
     menu_dirty: bool,
+    last_frame: Instant,
+    last_vp: (u32, u32),
 }
 
 impl App {
@@ -230,12 +316,18 @@ impl App {
             cursor: (0.0, 0.0),
             dragging: false,
             shift: false,
-            sidebar_open: false,
+            side: Fade::new(0.0),
             hover: None,
+            fades: [Fade::new(0.0); 3],
+            appear: Fade { v: 0.0, to: 1.0 },
+            angle: Fade::new(0.0),
             cursor_icon: CursorIcon::Default,
             menu: None,
-            ui_dirty: true,
+            header_dirty: true,
+            sidebar_dirty: true,
             menu_dirty: false,
+            last_frame: Instant::now(),
+            last_vp: (0, 0),
         }
     }
 
@@ -245,13 +337,24 @@ impl App {
         }
     }
 
+    fn sidebar_open(&self) -> bool {
+        self.side.to > 0.5
+    }
+
+    fn toggle_sidebar(&mut self) {
+        self.side.to = if self.sidebar_open() { 0.0 } else { 1.0 };
+        self.header_dirty = true;
+        self.sidebar_dirty = true;
+        self.redraw();
+    }
+
     fn layout(&self) -> Option<Layout> {
         let w = self.window.as_ref()?;
         let size = w.inner_size();
         Some(Layout::new(
             (size.width, size.height),
             w.scale_factor() as f32,
-            self.sidebar_open,
+            self.side.v,
         ))
     }
 
@@ -270,7 +373,7 @@ impl App {
     fn open_menu(&mut self) {
         let Some(lay) = self.layout() else { return };
         let mut menu = Menu::new(self.cursor, lay.win, lay.scale);
-        menu.hover = menu.item_at(self.cursor);
+        menu.set_hover(menu.item_at(self.cursor));
         self.menu = Some(menu);
         self.menu_dirty = true;
         self.redraw();
@@ -285,7 +388,7 @@ impl App {
     fn apply(&mut self, action: Action) {
         match action {
             Action::ResetZoom => {
-                self.view = View::default();
+                self.view.reset();
                 self.redraw();
             }
             Action::RotateLeft => self.rotate(false),
@@ -304,7 +407,11 @@ impl App {
             gpu.set_image(&rotated);
         }
         self.image = Some(rotated);
-        self.view = View::default();
+        self.view.reset();
+        self.angle = Fade {
+            v: if clockwise { -FRAC_PI_2 } else { FRAC_PI_2 },
+            to: 0.0,
+        };
         self.redraw();
     }
 
@@ -351,7 +458,13 @@ impl App {
         let hover = lay.hit(self.cursor);
         if hover != self.hover {
             self.hover = hover;
-            self.ui_dirty = true;
+            for (i, f) in self.fades.iter_mut().enumerate() {
+                f.to = if hover.map(|h| h.index()) == Some(i) {
+                    1.0
+                } else {
+                    0.0
+                };
+            }
             window.request_redraw();
         }
 
@@ -392,19 +505,16 @@ impl App {
         }
 
         let (ix, iy) = lay.info_center();
-        if self.sidebar_open {
-            cv.circle(ix, iy, r, ACTIVE);
-        } else if self.hover == Some(Hit::Info) {
-            cv.circle(ix, iy, r, HOVER);
-        }
+        let hv = self.fades[Hit::Info.index()].v;
+        let bg = lerp(lerp(HEADER, HOVER, hv), ACTIVE, self.side.v);
+        cv.circle(ix, iy, r, bg);
         cv.ring(ix, iy, 7.0 * s, 1.6 * s, TEXT);
         cv.circle(ix, iy - 3.2 * s, 1.0 * s, TEXT);
         cv.line(ix, iy - 0.6 * s, ix, iy + 3.4 * s, 1.6 * s, TEXT);
 
         let (cx, cy) = lay.close_center();
-        if self.hover == Some(Hit::Close) {
-            cv.circle(cx, cy, r, HOVER);
-        }
+        let cv_fade = self.fades[Hit::Close.index()].v;
+        cv.circle(cx, cy, r, lerp(HEADER, HOVER, cv_fade));
         let d = 4.5 * s;
         cv.line(cx - d, cy - d, cx + d, cy + d, 1.6 * s, TEXT);
         cv.line(cx - d, cy + d, cx + d, cy - d, 1.6 * s, TEXT);
@@ -415,9 +525,9 @@ impl App {
         let s = lay.scale;
         let r = BTN_R * s;
 
-        let x = w as i32 - lay.sidebar_w;
+        let x = w as i32 - lay.sidebar_full;
         let sh = h as i32 - lay.header_h;
-        cv.fill_rect(x, lay.header_h, lay.sidebar_w, sh, SIDEBAR);
+        cv.fill_rect(x, lay.header_h, lay.sidebar_full, sh, SIDEBAR);
         cv.fill_rect(x, lay.header_h, 1, sh, BORDER);
 
         let Some(info) = &self.info else { return };
@@ -457,9 +567,8 @@ impl App {
         }
 
         let (fx, fy) = lay.folder_btn_center();
-        if self.hover == Some(Hit::OpenFolder) {
-            cv.circle(fx, fy, r, HOVER);
-        }
+        let ff = self.fades[Hit::OpenFolder.index()].v;
+        cv.circle(fx, fy, r, lerp(CARD, HOVER, ff));
         cv.round_rect(
             fx - 7.0 * s,
             fy - 3.5 * s,
@@ -472,6 +581,39 @@ impl App {
     }
 
     fn render(&mut self) {
+        let now = Instant::now();
+        let dt = now.duration_since(self.last_frame).as_secs_f32().min(0.05);
+        self.last_frame = now;
+        let mut busy = false;
+
+        if self.side.step(dt, 16.0) {
+            busy = true;
+            self.header_dirty = true;
+        }
+        for (i, f) in self.fades.iter_mut().enumerate() {
+            if f.step(dt, 20.0) {
+                busy = true;
+                if i == Hit::OpenFolder.index() {
+                    self.sidebar_dirty = true;
+                } else {
+                    self.header_dirty = true;
+                }
+            }
+        }
+        let mut image_moving = false;
+        if self.appear.step(dt, 12.0) {
+            image_moving = true;
+        }
+        if self.angle.step(dt, 14.0) {
+            image_moving = true;
+        }
+        if let Some(menu) = &mut self.menu {
+            if menu.step(dt) {
+                busy = true;
+                self.menu_dirty = true;
+            }
+        }
+
         let Some(lay) = self.layout() else { return };
         let (w, h) = lay.win;
         if w == 0 || h == 0 {
@@ -480,10 +622,22 @@ impl App {
         let hh = lay.header_h as u32;
         let (vx, vy, vw, vh) = lay.viewport();
 
+        let snap = (vw, vh) != self.last_vp;
+        self.last_vp = (vw, vh);
+        if let Some(dims) = self.image.as_ref().map(|i| i.dimensions()) {
+            self.view.clamp_pan(dims, (vw, vh));
+            if self.view.step(dims, (vw, vh), dt, snap) {
+                image_moving = true;
+            }
+        }
+        if image_moving {
+            busy = true;
+        }
+
         let mut header = None;
         let mut sidebar = None;
-        if self.ui_dirty {
-            self.ui_dirty = false;
+        if self.header_dirty {
+            self.header_dirty = false;
             let mut hb = vec![0u32; (w * hh) as usize];
             self.draw_header(
                 &mut Canvas {
@@ -496,9 +650,11 @@ impl App {
                 &lay,
             );
             header = Some(hb);
-
-            if lay.sidebar_w > 0 {
-                let sw = lay.sidebar_w as u32;
+        }
+        if self.sidebar_dirty {
+            self.sidebar_dirty = false;
+            if lay.sidebar_w > 0 || self.sidebar_open() {
+                let sw = lay.sidebar_full as u32;
                 let sh = h.saturating_sub(hh).max(1);
                 let mut sb = vec![0u32; (sw * sh) as usize];
                 self.draw_sidebar(
@@ -506,7 +662,7 @@ impl App {
                         px: &mut sb,
                         w: sw,
                         h: sh,
-                        ox: w as i32 - lay.sidebar_w,
+                        ox: w as i32 - lay.sidebar_full,
                         oy: lay.header_h,
                     },
                     &lay,
@@ -550,19 +706,22 @@ impl App {
 
         if let Some(img) = &self.image {
             let dims = img.dimensions();
-            self.view.clamp_pan(dims, (vw, vh));
-            let k = self.view.scale(dims, (vw, vh));
+            let k = self.view.cur_scale * (0.96 + 0.04 * self.appear.v);
             let (dw, dh) = (dims.0 as f32 * k, dims.1 as f32 * k);
-            let cx = vx as f32 + vw as f32 / 2.0 + self.view.pan.0;
-            let cy = vy as f32 + vh as f32 / 2.0 + self.view.pan.1;
+            let cx = vx as f32 + vw as f32 / 2.0 + self.view.cur_pan.0;
+            let cy = vy as f32 + vh as f32 / 2.0 + self.view.cur_pan.1;
+            let (mut rx, mut ry, mut rw, mut rh) = (cx - dw / 2.0, cy - dh / 2.0, dw, dh);
+            if !image_moving {
+                rx = rx.round();
+                ry = ry.round();
+                rw = rw.round();
+                rh = rh.round();
+            }
             gpu.draw_image(
-                (
-                    (cx - dw / 2.0).round(),
-                    (cy - dh / 2.0).round(),
-                    dw.round(),
-                    dh.round(),
-                ),
+                (rx, ry, rw, rh),
                 (vx, vy, vw, vh),
+                self.appear.v,
+                self.angle.v,
             );
         }
 
@@ -571,9 +730,14 @@ impl App {
         }
         gpu.draw_header();
         if let Some(menu) = &self.menu {
-            gpu.draw_menu(menu.x, menu.y);
+            let lift = ((1.0 - menu.appear.v) * 6.0 * lay.scale) as i32;
+            gpu.draw_menu(menu.x, menu.y + lift, menu.appear.v);
         }
         gpu.present();
+
+        if busy {
+            self.redraw();
+        }
     }
 }
 
@@ -634,11 +798,7 @@ impl ApplicationHandler for App {
                         self.close_menu();
                         self.rotate(!self.shift);
                     }
-                    PhysicalKey::Code(KeyCode::KeyI) => {
-                        self.sidebar_open = !self.sidebar_open;
-                        self.ui_dirty = true;
-                        self.redraw();
-                    }
+                    PhysicalKey::Code(KeyCode::KeyI) => self.toggle_sidebar(),
                     _ => {}
                 }
             }
@@ -646,11 +806,13 @@ impl ApplicationHandler for App {
                 if let Some(gpu) = &mut self.gpu {
                     gpu.resize(size.width, size.height);
                 }
-                self.ui_dirty = true;
+                self.header_dirty = true;
+                self.sidebar_dirty = true;
                 self.redraw();
             }
             WindowEvent::ScaleFactorChanged { .. } => {
-                self.ui_dirty = true;
+                self.header_dirty = true;
+                self.sidebar_dirty = true;
                 self.redraw();
             }
             WindowEvent::MouseWheel { delta, .. } => {
@@ -710,11 +872,7 @@ impl ApplicationHandler for App {
                 }
                 match lay.hit(self.cursor) {
                     Some(Hit::Close) => el.exit(),
-                    Some(Hit::Info) => {
-                        self.sidebar_open = !self.sidebar_open;
-                        self.ui_dirty = true;
-                        self.redraw();
-                    }
+                    Some(Hit::Info) => self.toggle_sidebar(),
                     Some(Hit::OpenFolder) => self.open_folder(),
                     None if self.cursor.1 < lay.header_h as f64 => {
                         let _ = window.drag_window();
@@ -728,23 +886,22 @@ impl ApplicationHandler for App {
             WindowEvent::CursorMoved { position, .. } => {
                 let new = (position.x, position.y);
                 if self.dragging && self.image.is_some() {
-                    self.view.pan.0 += (new.0 - self.cursor.0) as f32;
-                    self.view.pan.1 += (new.1 - self.cursor.1) as f32;
+                    let dx = (new.0 - self.cursor.0) as f32;
+                    let dy = (new.1 - self.cursor.1) as f32;
+                    self.view.pan.0 += dx;
+                    self.view.pan.1 += dy;
+                    self.view.cur_pan.0 += dx;
+                    self.view.cur_pan.1 += dy;
                     self.redraw();
                 }
                 self.cursor = new;
 
-                let mut changed = false;
                 if let Some(menu) = &mut self.menu {
                     let item = menu.item_at(new);
                     if item != menu.hover {
-                        menu.hover = item;
-                        changed = true;
+                        menu.set_hover(item);
+                        self.redraw();
                     }
-                }
-                if changed {
-                    self.menu_dirty = true;
-                    self.redraw();
                 }
 
                 self.update_pointer();

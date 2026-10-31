@@ -1,12 +1,12 @@
 #![allow(unsafe_op_in_unsafe_fn)]
 
-use glutin::display::GetGlDisplay;
 use std::{num::NonZeroU32, rc::Rc};
 
 use glow::HasContext;
 use glutin::{
     config::ConfigTemplateBuilder,
     context::{ContextApi, ContextAttributesBuilder, PossiblyCurrentContext, Version},
+    display::GetGlDisplay,
     prelude::*,
     surface::{Surface, SwapInterval, WindowSurface},
 };
@@ -26,11 +26,16 @@ use crate::draw::Rgb;
 const VERT: &str = r#"#version 300 es
 uniform vec4 u_rect;
 uniform vec2 u_res;
+uniform float u_angle;
 out vec2 v_uv;
 void main() {
     vec2 c = vec2(float(gl_VertexID & 1), float((gl_VertexID >> 1) & 1));
     v_uv = c;
-    vec2 p = u_rect.xy + c * u_rect.zw;
+    vec2 local = (c - 0.5) * u_rect.zw;
+    float cs = cos(u_angle);
+    float sn = sin(u_angle);
+    vec2 rot = vec2(local.x * cs - local.y * sn, local.x * sn + local.y * cs);
+    vec2 p = u_rect.xy + 0.5 * u_rect.zw + rot;
     gl_Position = vec4(p.x / u_res.x * 2.0 - 1.0, 1.0 - p.y / u_res.y * 2.0, 0.0, 1.0);
 }
 "#;
@@ -38,10 +43,12 @@ void main() {
 const FRAG: &str = r#"#version 300 es
 precision mediump float;
 uniform sampler2D u_tex;
+uniform float u_alpha;
 in vec2 v_uv;
 out vec4 o_color;
 void main() {
-    o_color = texture(u_tex, v_uv);
+    vec4 c = texture(u_tex, v_uv);
+    o_color = vec4(c.rgb, c.a * u_alpha);
 }
 "#;
 
@@ -59,6 +66,8 @@ pub struct Gpu {
     vao: glow::VertexArray,
     u_rect: Option<glow::UniformLocation>,
     u_res: Option<glow::UniformLocation>,
+    u_alpha: Option<glow::UniformLocation>,
+    u_angle: Option<glow::UniformLocation>,
     max_tex: u32,
     win: (u32, u32),
     image: Option<Tex>,
@@ -110,13 +119,15 @@ impl Gpu {
 
         let gl =
             unsafe { glow::Context::from_loader_function_cstr(|s| display.get_proc_address(s)) };
-        let (program, vao, u_rect, u_res, max_tex) = unsafe {
+        let (program, vao, u_rect, u_res, u_alpha, u_angle, max_tex) = unsafe {
             let program = build_program(&gl)?;
             let vao = gl.create_vertex_array()?;
             let u_rect = gl.get_uniform_location(program, "u_rect");
             let u_res = gl.get_uniform_location(program, "u_res");
+            let u_alpha = gl.get_uniform_location(program, "u_alpha");
+            let u_angle = gl.get_uniform_location(program, "u_angle");
             let max_tex = gl.get_parameter_i32(glow::MAX_TEXTURE_SIZE).max(1024) as u32;
-            (program, vao, u_rect, u_res, max_tex)
+            (program, vao, u_rect, u_res, u_alpha, u_angle, max_tex)
         };
 
         let gpu = Self {
@@ -127,6 +138,8 @@ impl Gpu {
             vao,
             u_rect,
             u_res,
+            u_alpha,
+            u_angle,
             max_tex,
             win: (1, 1),
             image: None,
@@ -196,6 +209,19 @@ impl Gpu {
         }
     }
 
+    pub fn set_menu(&mut self, px: &[u32], w: u32, h: u32) {
+        unsafe {
+            upload(
+                &self.gl,
+                &mut self.menu,
+                w as i32,
+                h as i32,
+                &to_rgba(px),
+                false,
+            )
+        }
+    }
+
     pub fn begin(&mut self, w: u32, h: u32, bg: Rgb) {
         self.win = (w, h);
         unsafe {
@@ -218,7 +244,13 @@ impl Gpu {
         }
     }
 
-    pub fn draw_image(&self, rect: (f32, f32, f32, f32), clip: (i32, i32, u32, u32)) {
+    pub fn draw_image(
+        &self,
+        rect: (f32, f32, f32, f32),
+        clip: (i32, i32, u32, u32),
+        alpha: f32,
+        angle: f32,
+    ) {
         let Some(tex) = &self.image else { return };
         unsafe {
             self.gl.enable(glow::SCISSOR_TEST);
@@ -229,38 +261,35 @@ impl Gpu {
                 clip.3 as i32,
             );
         }
-        self.quad(tex, rect);
+        self.quad(tex, rect, alpha, angle);
         unsafe { self.gl.disable(glow::SCISSOR_TEST) };
     }
 
     pub fn draw_header(&self) {
         if let Some(tex) = &self.header {
-            self.quad(tex, (0.0, 0.0, tex.w as f32, tex.h as f32));
+            self.quad(tex, (0.0, 0.0, tex.w as f32, tex.h as f32), 1.0, 0.0);
         }
     }
 
     pub fn draw_sidebar(&self, x: i32, y: i32) {
         if let Some(tex) = &self.sidebar {
-            self.quad(tex, (x as f32, y as f32, tex.w as f32, tex.h as f32));
+            self.quad(
+                tex,
+                (x as f32, y as f32, tex.w as f32, tex.h as f32),
+                1.0,
+                0.0,
+            );
         }
     }
 
-    pub fn set_menu(&mut self, px: &[u32], w: u32, h: u32) {
-        unsafe {
-            upload(
-                &self.gl,
-                &mut self.menu,
-                w as i32,
-                h as i32,
-                &to_rgba(px),
-                false,
-            )
-        }
-    }
-
-    pub fn draw_menu(&self, x: i32, y: i32) {
+    pub fn draw_menu(&self, x: i32, y: i32, alpha: f32) {
         if let Some(tex) = &self.menu {
-            self.quad(tex, (x as f32, y as f32, tex.w as f32, tex.h as f32));
+            self.quad(
+                tex,
+                (x as f32, y as f32, tex.w as f32, tex.h as f32),
+                alpha,
+                0.0,
+            );
         }
     }
 
@@ -268,11 +297,13 @@ impl Gpu {
         let _ = self.surface.swap_buffers(&self.ctx);
     }
 
-    fn quad(&self, tex: &Tex, r: (f32, f32, f32, f32)) {
+    fn quad(&self, tex: &Tex, r: (f32, f32, f32, f32), alpha: f32, angle: f32) {
         unsafe {
             self.gl.bind_texture(glow::TEXTURE_2D, Some(tex.id));
             self.gl
                 .uniform_4_f32(self.u_rect.as_ref(), r.0, r.1, r.2, r.3);
+            self.gl.uniform_1_f32(self.u_alpha.as_ref(), alpha);
+            self.gl.uniform_1_f32(self.u_angle.as_ref(), angle);
             self.gl.draw_arrays(glow::TRIANGLE_STRIP, 0, 4);
         }
     }
