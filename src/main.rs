@@ -110,11 +110,15 @@ impl ApplicationHandler for App {
     fn window_event(&mut self, el: &ActiveEventLoop, _: WindowId, event: WindowEvent) {
         match event {
             WindowEvent::CloseRequested => el.exit(),
-            WindowEvent::KeyboardInput { event, .. }
-                if event.state.is_pressed()
-                    && event.logical_key == Key::Named(NamedKey::Escape) =>
-            {
-                el.exit()
+            WindowEvent::KeyboardInput { event, .. } if event.state.is_pressed() => {
+                match &event.logical_key {
+                    Key::Named(NamedKey::Escape) => el.exit(),
+                    Key::Character(c) if c.as_str() == "0" => {
+                        self.view = View::default();
+                        self.redraw();
+                    }
+                    _ => {}
+                }
             }
             WindowEvent::Resized(_) => self.redraw(),
             WindowEvent::MouseWheel { delta, .. } => {
