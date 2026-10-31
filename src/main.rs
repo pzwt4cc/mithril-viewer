@@ -1,17 +1,14 @@
 mod draw;
+mod gpu;
 mod info;
 
 use std::{
-    num::NonZeroU32,
     path::{Path, PathBuf},
     rc::Rc,
 };
 
 use fontdue::{Font, FontSettings};
-use image::{
-    ImageFormat, RgbaImage,
-    imageops::{self, FilterType},
-};
+use image::{ImageFormat, RgbaImage};
 use winit::{
     application::ApplicationHandler,
     dpi::LogicalSize,
@@ -22,9 +19,8 @@ use winit::{
 };
 
 use draw::{Canvas, Rgb, ellipsize, text_width};
+use gpu::Gpu;
 use info::{Info, labels};
-
-type Surface = softbuffer::Surface<Rc<Window>, Rc<Window>>;
 
 const BG: Rgb = [0x1e, 0x1e, 0x1e];
 const HEADER: Rgb = [0x2a, 0x2a, 0x2a];
@@ -181,30 +177,6 @@ fn dir_icon(d: ResizeDirection) -> CursorIcon {
     }
 }
 
-fn draw_image(
-    cv: &mut Canvas,
-    src: &RgbaImage,
-    k: f32,
-    center: (f32, f32),
-    clip: (i32, i32, i32, i32),
-) {
-    let (sw, sh) = src.dimensions();
-    let ox = center.0 - sw as f32 * k / 2.0;
-    let oy = center.1 - sh as f32 * k / 2.0;
-    let x_lo = (ox.floor() as i32).max(clip.0);
-    let x_hi = ((ox + sw as f32 * k).ceil() as i32).min(clip.2);
-    let y_lo = (oy.floor() as i32).max(clip.1);
-    let y_hi = ((oy + sh as f32 * k).ceil() as i32).min(clip.3);
-    for y in y_lo..y_hi {
-        let sy = (((y as f32 + 0.5 - oy) / k).floor().max(0.0) as u32).min(sh - 1);
-        for x in x_lo..x_hi {
-            let sx = (((x as f32 + 0.5 - ox) / k).floor().max(0.0) as u32).min(sw - 1);
-            let [r, g, b, a] = src.get_pixel(sx, sy).0;
-            cv.blend(x, y, [r, g, b], a as f32 / 255.0);
-        }
-    }
-}
-
 #[allow(clippy::too_many_arguments)]
 fn draw_row(
     cv: &mut Canvas,
@@ -227,18 +199,17 @@ fn draw_row(
 struct App {
     font: Font,
     window: Option<Rc<Window>>,
-    context: Option<softbuffer::Context<Rc<Window>>>,
-    surface: Option<Surface>,
+    gpu: Option<Gpu>,
     path: Option<PathBuf>,
     info: Option<Info>,
     image: Option<RgbaImage>,
-    scaled: Option<RgbaImage>,
     view: View,
     cursor: (f64, f64),
     dragging: bool,
     sidebar_open: bool,
     hover: Option<Hit>,
     cursor_icon: CursorIcon,
+    ui_dirty: bool,
 }
 
 impl App {
@@ -246,18 +217,17 @@ impl App {
         Self {
             font,
             window: None,
-            context: None,
-            surface: None,
+            gpu: None,
             path: None,
             info: None,
             image: None,
-            scaled: None,
             view: View::default(),
             cursor: (0.0, 0.0),
             dragging: false,
             sidebar_open: false,
             hover: None,
             cursor_icon: CursorIcon::Default,
+            ui_dirty: true,
         }
     }
 
@@ -332,6 +302,7 @@ impl App {
         let hover = lay.hit(self.cursor);
         if hover != self.hover {
             self.hover = hover;
+            self.ui_dirty = true;
             window.request_redraw();
         }
 
@@ -348,129 +319,18 @@ impl App {
         }
     }
 
-    fn render(&mut self) {
-        let Some(lay) = self.layout() else { return };
-        let (w, h) = lay.win;
-        let (Some(nw), Some(nh)) = (NonZeroU32::new(w), NonZeroU32::new(h)) else {
-            return;
-        };
-        let (vx, vy, vw, vh) = lay.viewport();
-        let s = lay.scale;
+    fn draw_header(&self, cv: &mut Canvas, lay: &Layout) {
+        let (w, s) = (lay.win.0, lay.scale);
+        let r = BTN_R * s;
 
-        let mut plan = None;
-        if let Some(img) = &self.image {
-            let dims = img.dimensions();
-            self.view.clamp_pan(dims, (vw, vh));
-            let scale = self.view.scale(dims, (vw, vh));
-            let dw = ((dims.0 as f32 * scale).round() as u32).max(1);
-            let dh = ((dims.1 as f32 * scale).round() as u32).max(1);
-            let use_scaled = scale <= 1.0 && (dw, dh) != dims;
-            if use_scaled && self.scaled.as_ref().map(|c| c.dimensions()) != Some((dw, dh)) {
-                self.scaled = Some(imageops::resize(img, dw, dh, FilterType::Triangle));
-            }
-            plan = Some((scale, use_scaled));
-        }
+        cv.fill_rect(0, 0, w as i32, lay.header_h, HEADER);
+        cv.fill_rect(0, lay.header_h - 1, w as i32, 1, BORDER);
 
         let title = self
             .path
             .as_ref()
             .and_then(|p| p.file_name())
             .map(|n| n.to_string_lossy().into_owned());
-
-        let Some(surface) = self.surface.as_mut() else {
-            return;
-        };
-        surface.resize(nw, nh).unwrap();
-        let mut buffer = surface.buffer_mut().unwrap();
-        let mut cv = Canvas {
-            px: &mut buffer,
-            w,
-            h,
-        };
-        cv.clear(BG);
-
-        if let (Some(img), Some((scale, use_scaled))) = (&self.image, plan) {
-            let (src, k) = if use_scaled {
-                (self.scaled.as_ref().unwrap(), 1.0)
-            } else {
-                (img, scale)
-            };
-            let center = (
-                vx as f32 + vw as f32 / 2.0 + self.view.pan.0,
-                vy as f32 + vh as f32 / 2.0 + self.view.pan.1,
-            );
-            draw_image(
-                &mut cv,
-                src,
-                k,
-                center,
-                (vx, vy, vx + vw as i32, vy + vh as i32),
-            );
-        }
-
-        let r = BTN_R * s;
-
-        if lay.sidebar_w > 0 {
-            let x = w as i32 - lay.sidebar_w;
-            let sh = h as i32 - lay.header_h;
-            cv.fill_rect(x, lay.header_h, lay.sidebar_w, sh, SIDEBAR);
-            cv.fill_rect(x, lay.header_h, 1, sh, BORDER);
-
-            if let Some(info) = &self.info {
-                let lb = labels();
-                let cards: [Vec<(&str, &str)>; 4] = [
-                    vec![(lb.name, info.name.as_str())],
-                    vec![(lb.folder, info.folder.as_str())],
-                    vec![
-                        (lb.resolution, info.resolution.as_str()),
-                        (lb.format, info.format.as_str()),
-                        (lb.size, info.size.as_str()),
-                    ],
-                    vec![
-                        (lb.created, info.created.as_str()),
-                        (lb.modified, info.modified.as_str()),
-                    ],
-                ];
-                let (cx0, cw) = (lay.card_x(), lay.card_w());
-                for (n, rows) in cards.iter().enumerate() {
-                    let y0 = lay.card_y(n);
-                    let ch = rows.len() as f32 * ROW_H * s;
-                    cv.round_rect(cx0, y0, cw, ch, 10.0 * s, CARD);
-                    for (i, (label, value)) in rows.iter().enumerate() {
-                        let ry = y0 + i as f32 * ROW_H * s;
-                        if i > 0 {
-                            cv.fill_rect(
-                                (cx0 + 14.0 * s) as i32,
-                                ry as i32,
-                                (cw - 28.0 * s) as i32,
-                                1,
-                                BORDER,
-                            );
-                        }
-                        let right_pad = if n == 1 { 44.0 * s } else { 0.0 };
-                        draw_row(&mut cv, &self.font, cx0, ry, cw, s, label, value, right_pad);
-                    }
-                }
-
-                let (fx, fy) = lay.folder_btn_center();
-                if self.hover == Some(Hit::OpenFolder) {
-                    cv.circle(fx, fy, r, HOVER);
-                }
-                cv.round_rect(
-                    fx - 7.0 * s,
-                    fy - 3.5 * s,
-                    14.0 * s,
-                    10.0 * s,
-                    2.0 * s,
-                    TEXT,
-                );
-                cv.round_rect(fx - 7.0 * s, fy - 6.5 * s, 6.0 * s, 4.0 * s, 1.5 * s, TEXT);
-            }
-        }
-
-        cv.fill_rect(0, 0, w as i32, lay.header_h, HEADER);
-        cv.fill_rect(0, lay.header_h - 1, w as i32, 1, BORDER);
-
         if let Some(name) = title {
             let px = 14.0 * s;
             let max_w = (w as f32 - 2.0 * 130.0 * s).max(0.0);
@@ -499,13 +359,154 @@ impl App {
         let d = 4.5 * s;
         cv.line(cx - d, cy - d, cx + d, cy + d, 1.6 * s, TEXT);
         cv.line(cx - d, cy + d, cx + d, cy - d, 1.6 * s, TEXT);
+    }
 
-        buffer.present().unwrap();
+    fn draw_sidebar(&self, cv: &mut Canvas, lay: &Layout) {
+        let (w, h) = lay.win;
+        let s = lay.scale;
+        let r = BTN_R * s;
+
+        let x = w as i32 - lay.sidebar_w;
+        let sh = h as i32 - lay.header_h;
+        cv.fill_rect(x, lay.header_h, lay.sidebar_w, sh, SIDEBAR);
+        cv.fill_rect(x, lay.header_h, 1, sh, BORDER);
+
+        let Some(info) = &self.info else { return };
+        let lb = labels();
+        let cards: [Vec<(&str, &str)>; 4] = [
+            vec![(lb.name, info.name.as_str())],
+            vec![(lb.folder, info.folder.as_str())],
+            vec![
+                (lb.resolution, info.resolution.as_str()),
+                (lb.format, info.format.as_str()),
+                (lb.size, info.size.as_str()),
+            ],
+            vec![
+                (lb.created, info.created.as_str()),
+                (lb.modified, info.modified.as_str()),
+            ],
+        ];
+        let (cx0, cw) = (lay.card_x(), lay.card_w());
+        for (n, rows) in cards.iter().enumerate() {
+            let y0 = lay.card_y(n);
+            let ch = rows.len() as f32 * ROW_H * s;
+            cv.round_rect(cx0, y0, cw, ch, 10.0 * s, CARD);
+            for (i, (label, value)) in rows.iter().enumerate() {
+                let ry = y0 + i as f32 * ROW_H * s;
+                if i > 0 {
+                    cv.fill_rect(
+                        (cx0 + 14.0 * s) as i32,
+                        ry as i32,
+                        (cw - 28.0 * s) as i32,
+                        1,
+                        BORDER,
+                    );
+                }
+                let right_pad = if n == 1 { 44.0 * s } else { 0.0 };
+                draw_row(cv, &self.font, cx0, ry, cw, s, label, value, right_pad);
+            }
+        }
+
+        let (fx, fy) = lay.folder_btn_center();
+        if self.hover == Some(Hit::OpenFolder) {
+            cv.circle(fx, fy, r, HOVER);
+        }
+        cv.round_rect(
+            fx - 7.0 * s,
+            fy - 3.5 * s,
+            14.0 * s,
+            10.0 * s,
+            2.0 * s,
+            TEXT,
+        );
+        cv.round_rect(fx - 7.0 * s, fy - 6.5 * s, 6.0 * s, 4.0 * s, 1.5 * s, TEXT);
+    }
+
+    fn render(&mut self) {
+        let Some(lay) = self.layout() else { return };
+        let (w, h) = lay.win;
+        if w == 0 || h == 0 {
+            return;
+        }
+        let hh = lay.header_h as u32;
+        let (vx, vy, vw, vh) = lay.viewport();
+
+        let mut header = None;
+        let mut sidebar = None;
+        if self.ui_dirty {
+            self.ui_dirty = false;
+            let mut hb = vec![0u32; (w * hh) as usize];
+            self.draw_header(
+                &mut Canvas {
+                    px: &mut hb,
+                    w,
+                    h: hh,
+                    ox: 0,
+                    oy: 0,
+                },
+                &lay,
+            );
+            header = Some(hb);
+
+            if lay.sidebar_w > 0 {
+                let sw = lay.sidebar_w as u32;
+                let sh = h.saturating_sub(hh).max(1);
+                let mut sb = vec![0u32; (sw * sh) as usize];
+                self.draw_sidebar(
+                    &mut Canvas {
+                        px: &mut sb,
+                        w: sw,
+                        h: sh,
+                        ox: w as i32 - lay.sidebar_w,
+                        oy: lay.header_h,
+                    },
+                    &lay,
+                );
+                sidebar = Some((sb, sw, sh));
+            }
+        }
+
+        let Some(gpu) = self.gpu.as_mut() else { return };
+        if let Some(hb) = &header {
+            gpu.set_header(hb, w, hh);
+        }
+        if let Some((sb, sw, sh)) = &sidebar {
+            gpu.set_sidebar(sb, *sw, *sh);
+        }
+
+        gpu.begin(w, h, BG);
+
+        if let Some(img) = &self.image {
+            let dims = img.dimensions();
+            self.view.clamp_pan(dims, (vw, vh));
+            let k = self.view.scale(dims, (vw, vh));
+            let (dw, dh) = (dims.0 as f32 * k, dims.1 as f32 * k);
+            let cx = vx as f32 + vw as f32 / 2.0 + self.view.pan.0;
+            let cy = vy as f32 + vh as f32 / 2.0 + self.view.pan.1;
+            gpu.draw_image(
+                (
+                    (cx - dw / 2.0).round(),
+                    (cy - dh / 2.0).round(),
+                    dw.round(),
+                    dh.round(),
+                ),
+                (vx, vy, vw, vh),
+            );
+        }
+
+        if lay.sidebar_w > 0 {
+            gpu.draw_sidebar(w as i32 - lay.sidebar_w, lay.header_h);
+        }
+        gpu.draw_header();
+        gpu.present();
     }
 }
 
 impl ApplicationHandler for App {
     fn resumed(&mut self, el: &ActiveEventLoop) {
+        if self.gpu.is_some() {
+            return;
+        }
         let title = self
             .path
             .as_ref()
@@ -518,13 +519,21 @@ impl ApplicationHandler for App {
             .with_decorations(false)
             .with_inner_size(LogicalSize::new(1000.0, 720.0))
             .with_min_inner_size(LogicalSize::new(420.0, 280.0));
-        let window = Rc::new(el.create_window(attrs).unwrap());
-        let context = softbuffer::Context::new(window.clone()).unwrap();
-        let surface = softbuffer::Surface::new(&context, window.clone()).unwrap();
-        window.request_redraw();
-        self.window = Some(window);
-        self.context = Some(context);
-        self.surface = Some(surface);
+
+        match Gpu::new(el, attrs) {
+            Ok((window, mut gpu)) => {
+                if let Some(img) = &self.image {
+                    gpu.set_image(img);
+                }
+                window.request_redraw();
+                self.window = Some(window);
+                self.gpu = Some(gpu);
+            }
+            Err(e) => {
+                eprintln!("mithril: не удалось запустить OpenGL: {e}");
+                el.exit();
+            }
+        }
     }
 
     fn window_event(&mut self, el: &ActiveEventLoop, _: WindowId, event: WindowEvent) {
@@ -541,12 +550,23 @@ impl ApplicationHandler for App {
                     }
                     PhysicalKey::Code(KeyCode::KeyI) => {
                         self.sidebar_open = !self.sidebar_open;
+                        self.ui_dirty = true;
                         self.redraw();
                     }
                     _ => {}
                 }
             }
-            WindowEvent::Resized(_) => self.redraw(),
+            WindowEvent::Resized(size) => {
+                if let Some(gpu) = &mut self.gpu {
+                    gpu.resize(size.width, size.height);
+                }
+                self.ui_dirty = true;
+                self.redraw();
+            }
+            WindowEvent::ScaleFactorChanged { .. } => {
+                self.ui_dirty = true;
+                self.redraw();
+            }
             WindowEvent::MouseWheel { delta, .. } => {
                 let steps = match delta {
                     MouseScrollDelta::LineDelta(_, y) => y,
@@ -576,6 +596,7 @@ impl ApplicationHandler for App {
                     Some(Hit::Close) => el.exit(),
                     Some(Hit::Info) => {
                         self.sidebar_open = !self.sidebar_open;
+                        self.ui_dirty = true;
                         self.redraw();
                     }
                     Some(Hit::OpenFolder) => self.open_folder(),

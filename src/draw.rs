@@ -6,6 +6,8 @@ pub struct Canvas<'a> {
     pub px: &'a mut [u32],
     pub w: u32,
     pub h: u32,
+    pub ox: i32,
+    pub oy: i32,
 }
 
 fn pack(c: Rgb) -> u32 {
@@ -13,11 +15,8 @@ fn pack(c: Rgb) -> u32 {
 }
 
 impl Canvas<'_> {
-    pub fn clear(&mut self, c: Rgb) {
-        self.px.fill(pack(c));
-    }
-
     pub fn fill_rect(&mut self, x: i32, y: i32, w: i32, h: i32, c: Rgb) {
+        let (x, y) = (x - self.ox, y - self.oy);
         let x0 = x.max(0);
         let y0 = y.max(0);
         let x1 = (x + w).min(self.w as i32);
@@ -33,6 +32,7 @@ impl Canvas<'_> {
     }
 
     pub fn blend(&mut self, x: i32, y: i32, c: Rgb, cov: f32) {
+        let (x, y) = (x - self.ox, y - self.oy);
         if cov <= 0.0 || x < 0 || y < 0 || x >= self.w as i32 || y >= self.h as i32 {
             return;
         }
@@ -71,17 +71,6 @@ impl Canvas<'_> {
         );
     }
 
-    pub fn round_rect(&mut self, x: f32, y: f32, w: f32, h: f32, r: f32, c: Rgb) {
-        let (cx, cy) = (x + w / 2.0, y + h / 2.0);
-        let (hx, hy) = (w / 2.0 - r, h / 2.0 - r);
-        self.shape(x - 1.0, y - 1.0, x + w + 1.0, y + h + 1.0, c, |px, py| {
-            let qx = (px - cx).abs() - hx;
-            let qy = (py - cy).abs() - hy;
-            let d = (qx.max(0.0).powi(2) + qy.max(0.0).powi(2)).sqrt() + qx.max(qy).min(0.0) - r;
-            (0.5 - d).clamp(0.0, 1.0)
-        });
-    }
-
     pub fn ring(&mut self, cx: f32, cy: f32, r: f32, t: f32, c: Rgb) {
         let o = r + t + 1.0;
         self.shape(cx - o, cy - o, cx + o, cy + o, c, |x, y| {
@@ -107,6 +96,17 @@ impl Canvas<'_> {
                 (t / 2.0 + 0.5 - d).clamp(0.0, 1.0)
             },
         );
+    }
+
+    pub fn round_rect(&mut self, x: f32, y: f32, w: f32, h: f32, r: f32, c: Rgb) {
+        let (cx, cy) = (x + w / 2.0, y + h / 2.0);
+        let (hx, hy) = (w / 2.0 - r, h / 2.0 - r);
+        self.shape(x - 1.0, y - 1.0, x + w + 1.0, y + h + 1.0, c, |px, py| {
+            let qx = (px - cx).abs() - hx;
+            let qy = (py - cy).abs() - hy;
+            let d = (qx.max(0.0).powi(2) + qy.max(0.0).powi(2)).sqrt() + qx.max(qy).min(0.0) - r;
+            (0.5 - d).clamp(0.0, 1.0)
+        });
     }
 
     pub fn text(&mut self, font: &Font, s: &str, x: f32, baseline: f32, px: f32, c: Rgb) {
