@@ -1,17 +1,13 @@
 mod draw;
 mod gpu;
 mod info;
+mod loader;
 mod menu;
 
-use std::{
-    f32::consts::FRAC_PI_2,
-    path::{Path, PathBuf},
-    rc::Rc,
-    time::Instant,
-};
+use std::{f32::consts::FRAC_PI_2, path::PathBuf, rc::Rc, time::Instant};
 
 use fontdue::{Font, FontSettings};
-use image::{ImageFormat, RgbaImage, imageops};
+use image::{RgbaImage, imageops};
 use winit::{
     application::ApplicationHandler,
     dpi::LogicalSize,
@@ -912,14 +908,6 @@ impl ApplicationHandler for App {
     }
 }
 
-fn load(path: &Path) -> Result<(RgbaImage, Option<ImageFormat>, bool), Box<dyn std::error::Error>> {
-    let reader = image::ImageReader::open(path)?.with_guessed_format()?;
-    let format = reader.format();
-    let img = reader.decode()?;
-    let has_alpha = img.color().has_alpha();
-    Ok((img.to_rgba8(), format, has_alpha))
-}
-
 fn main() {
     let font = Font::from_bytes(
         &include_bytes!("../assets/InterVariable.ttf")[..],
@@ -930,10 +918,15 @@ fn main() {
     let mut app = App::new(font);
 
     if let Some(path) = std::env::args_os().nth(1).map(PathBuf::from) {
-        match load(&path) {
-            Ok((img, format, has_alpha)) => {
-                app.info = Some(Info::gather(&path, img.dimensions(), format, has_alpha));
-                app.image = Some(img);
+        match loader::load(&path) {
+            Ok(l) => {
+                app.info = Some(Info::gather(
+                    &path,
+                    l.image.dimensions(),
+                    l.format,
+                    l.has_alpha,
+                ));
+                app.image = Some(l.image);
                 app.path = Some(path);
             }
             Err(e) => eprintln!("mithril: {}: {e}", path.display()),
