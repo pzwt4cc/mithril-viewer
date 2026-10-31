@@ -1,6 +1,9 @@
 use std::{num::NonZeroU32, path::PathBuf, rc::Rc};
 
-use image::RgbaImage;
+use image::{
+    RgbaImage,
+    imageops::{self, FilterType},
+};
 use winit::{
     application::ApplicationHandler,
     event::WindowEvent,
@@ -11,6 +14,8 @@ use winit::{
 
 type Surface = softbuffer::Surface<Rc<Window>, Rc<Window>>;
 
+const BG: [u8; 3] = [0x1e, 0x1e, 0x2e];
+
 #[derive(Default)]
 struct App {
     window: Option<Rc<Window>>,
@@ -18,6 +23,7 @@ struct App {
     surface: Option<Surface>,
     path: Option<PathBuf>,
     image: Option<RgbaImage>,
+    scaled: Option<RgbaImage>,
 }
 
 impl ApplicationHandler for App {
@@ -33,6 +39,7 @@ impl ApplicationHandler for App {
         let window = Rc::new(el.create_window(attrs).unwrap());
         let context = softbuffer::Context::new(window.clone()).unwrap();
         let surface = softbuffer::Surface::new(&context, window.clone()).unwrap();
+        window.request_redraw();
         self.window = Some(window);
         self.context = Some(context);
         self.surface = Some(surface);
@@ -47,20 +54,57 @@ impl ApplicationHandler for App {
             {
                 el.exit()
             }
+            WindowEvent::Resized(_) => {
+                if let Some(window) = &self.window {
+                    window.request_redraw();
+                }
+            }
             WindowEvent::RedrawRequested => {
                 let (Some(window), Some(surface)) = (&self.window, &mut self.surface) else {
                     return;
                 };
                 let size = window.inner_size();
-                let (Some(w), Some(h)) =
+                let (Some(nw), Some(nh)) =
                     (NonZeroU32::new(size.width), NonZeroU32::new(size.height))
                 else {
                     return;
                 };
-                surface.resize(w, h).unwrap();
-                let mut buf = surface.buffer_mut().unwrap();
-                buf.fill(0x001e1e2e);
-                buf.present().unwrap();
+                let (w, h) = (size.width, size.height);
+
+                if let Some(img) = &self.image {
+                    let (iw, ih) = img.dimensions();
+                    let scale = (w as f32 / iw as f32).min(h as f32 / ih as f32).min(1.0);
+                    let dw = ((iw as f32 * scale).round() as u32).clamp(1, w);
+                    let dh = ((ih as f32 * scale).round() as u32).clamp(1, h);
+                    if self.scaled.as_ref().map(|s| s.dimensions()) != Some((dw, dh)) {
+                        self.scaled = Some(if (dw, dh) == (iw, ih) {
+                            img.clone()
+                        } else {
+                            imageops::resize(img, dw, dh, FilterType::Triangle)
+                        });
+                    }
+                }
+
+                surface.resize(nw, nh).unwrap();
+                let mut buffer = surface.buffer_mut().unwrap();
+                let pixels: &mut [u32] = &mut buffer;
+                pixels.fill(u32::from_be_bytes([0, BG[0], BG[1], BG[2]]));
+
+                if let Some(s) = &self.scaled {
+                    let (dw, dh) = s.dimensions();
+                    let (ox, oy) = ((w - dw) / 2, (h - dh) / 2);
+                    for y in 0..dh {
+                        let start = ((oy + y) * w + ox) as usize;
+                        let row = &mut pixels[start..start + dw as usize];
+                        for (x, px) in row.iter_mut().enumerate() {
+                            let [r, g, b, a] = s.get_pixel(x as u32, y).0;
+                            let a = a as u32;
+                            let mix = |c: u8, bg: u8| (c as u32 * a + bg as u32 * (255 - a)) / 255;
+                            *px = mix(r, BG[0]) << 16 | mix(g, BG[1]) << 8 | mix(b, BG[2]);
+                        }
+                    }
+                }
+                buffer.present().unwrap();
             }
             _ => {}
         }
