@@ -1,4 +1,6 @@
-use std::{num::NonZeroU32, rc::Rc};
+use std::{num::NonZeroU32, path::PathBuf, rc::Rc};
+
+use image::RgbaImage;
 use winit::{
     application::ApplicationHandler,
     event::WindowEvent,
@@ -14,11 +16,20 @@ struct App {
     window: Option<Rc<Window>>,
     context: Option<softbuffer::Context<Rc<Window>>>,
     surface: Option<Surface>,
+    path: Option<PathBuf>,
+    image: Option<RgbaImage>,
 }
 
 impl ApplicationHandler for App {
     fn resumed(&mut self, el: &ActiveEventLoop) {
-        let attrs = Window::default_attributes().with_title("Mithril");
+        let title = self
+            .path
+            .as_ref()
+            .and_then(|p| p.file_name())
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_else(|| "Mithril".into());
+
+        let attrs = Window::default_attributes().with_title(title);
         let window = Rc::new(el.create_window(attrs).unwrap());
         let context = softbuffer::Context::new(window.clone()).unwrap();
         let surface = softbuffer::Surface::new(&context, window.clone()).unwrap();
@@ -57,6 +68,18 @@ impl ApplicationHandler for App {
 }
 
 fn main() {
+    let mut app = App::default();
+
+    if let Some(path) = std::env::args_os().nth(1).map(PathBuf::from) {
+        match image::open(&path) {
+            Ok(img) => {
+                app.image = Some(img.to_rgba8());
+                app.path = Some(path);
+            }
+            Err(e) => eprintln!("mithril: {}: {e}", path.display()),
+        }
+    }
+
     let event_loop = EventLoop::new().unwrap();
-    event_loop.run_app(&mut App::default()).unwrap();
+    event_loop.run_app(&mut app).unwrap();
 }
