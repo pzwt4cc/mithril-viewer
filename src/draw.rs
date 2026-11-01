@@ -10,8 +10,9 @@ pub struct Canvas<'a> {
     pub oy: i32,
 }
 
+/// Пиксели хранятся как 0xAARRGGBB (straight alpha). Буфер, заполненный нулями, прозрачный.
 fn pack(c: Rgb) -> u32 {
-    (c[0] as u32) << 16 | (c[1] as u32) << 8 | c[2] as u32
+    0xff00_0000 | (c[0] as u32) << 16 | (c[1] as u32) << 8 | c[2] as u32
 }
 
 impl Canvas<'_> {
@@ -38,14 +39,22 @@ impl Canvas<'_> {
         }
         let i = (y as u32 * self.w + x as u32) as usize;
         let dst = self.px[i];
-        let d = [
-            (dst >> 16 & 0xff) as f32,
-            (dst >> 8 & 0xff) as f32,
-            (dst & 0xff) as f32,
-        ];
-        let cov = cov.min(1.0);
-        let m = |s: u8, d: f32| (s as f32 * cov + d * (1.0 - cov)).round() as u32;
-        self.px[i] = m(c[0], d[0]) << 16 | m(c[1], d[1]) << 8 | m(c[2], d[2]);
+        let da = (dst >> 24) as f32 / 255.0;
+        let sa = cov.min(1.0);
+        let oa = sa + da * (1.0 - sa);
+        if oa <= 0.0 {
+            return;
+        }
+        let ch = |s: u8, shift: u32| {
+            let d = ((dst >> shift) & 0xff) as f32;
+            ((s as f32 * sa + d * da * (1.0 - sa)) / oa)
+                .round()
+                .min(255.0) as u32
+        };
+        self.px[i] = ((oa * 255.0).round() as u32) << 24
+            | ch(c[0], 16) << 16
+            | ch(c[1], 8) << 8
+            | ch(c[2], 0);
     }
 
     fn shape(&mut self, x0: f32, y0: f32, x1: f32, y1: f32, c: Rgb, f: impl Fn(f32, f32) -> f32) {
@@ -98,15 +107,60 @@ impl Canvas<'_> {
         );
     }
 
-    pub fn round_rect(&mut self, x: f32, y: f32, w: f32, h: f32, r: f32, c: Rgb) {
+    pub fn round_rect_alpha(&mut self, x: f32, y: f32, w: f32, h: f32, r: f32, c: Rgb, a: f32) {
         let (cx, cy) = (x + w / 2.0, y + h / 2.0);
         let (hx, hy) = (w / 2.0 - r, h / 2.0 - r);
         self.shape(x - 1.0, y - 1.0, x + w + 1.0, y + h + 1.0, c, |px, py| {
             let qx = (px - cx).abs() - hx;
             let qy = (py - cy).abs() - hy;
             let d = (qx.max(0.0).powi(2) + qy.max(0.0).powi(2)).sqrt() + qx.max(qy).min(0.0) - r;
-            (0.5 - d).clamp(0.0, 1.0)
+            (0.5 - d).clamp(0.0, 1.0) * a
         });
+    }
+
+    pub fn round_rect(&mut self, x: f32, y: f32, w: f32, h: f32, r: f32, c: Rgb) {
+        self.round_rect_alpha(x, y, w, h, r, c, 1.0);
+    }
+
+    /// Скруглённый прямоугольник с вертикальным градиентом.
+    #[allow(clippy::too_many_arguments)]
+    pub fn round_rect_grad(&mut self, x: f32, y: f32, w: f32, h: f32, r: f32, top: Rgb, bot: Rgb) {
+        let (cx, cy) = (x + w / 2.0, y + h / 2.0);
+        let (hx, hy) = (w / 2.0 - r, h / 2.0 - r);
+        for yy in (y.floor() as i32 - 1)..((y + h).ceil() as i32 + 1) {
+            let py = yy as f32 + 0.5;
+            let c = lerp(top, bot, (py - y) / h.max(1.0));
+            for xx in (x.floor() as i32 - 1)..((x + w).ceil() as i32 + 1) {
+                let px = xx as f32 + 0.5;
+                let qx = (px - cx).abs() - hx;
+                let qy = (py - cy).abs() - hy;
+                let d =
+                    (qx.max(0.0).powi(2) + qy.max(0.0).powi(2)).sqrt() + qx.max(qy).min(0.0) - r;
+                self.blend(xx, yy, c, (0.5 - d).clamp(0.0, 1.0));
+            }
+        }
+    }
+
+    /// Мягкая тень под скруглённым прямоугольником.
+    #[allow(clippy::too_many_arguments)]
+    pub fn shadow(&mut self, x: f32, y: f32, w: f32, h: f32, r: f32, blur: f32, alpha: f32) {
+        let (cx, cy) = (x + w / 2.0, y + h / 2.0);
+        let (hx, hy) = (w / 2.0 - r, h / 2.0 - r);
+        self.shape(
+            x - blur - 1.0,
+            y - blur - 1.0,
+            x + w + blur + 1.0,
+            y + h + blur + 1.0,
+            [0, 0, 0],
+            |px, py| {
+                let qx = (px - cx).abs() - hx;
+                let qy = (py - cy).abs() - hy;
+                let d =
+                    (qx.max(0.0).powi(2) + qy.max(0.0).powi(2)).sqrt() + qx.max(qy).min(0.0) - r;
+                let t = (1.0 - d / blur).clamp(0.0, 1.0);
+                alpha * t * t * (3.0 - 2.0 * t)
+            },
+        );
     }
 
     pub fn text(&mut self, font: &Font, s: &str, x: f32, baseline: f32, px: f32, c: Rgb) {

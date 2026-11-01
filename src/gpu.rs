@@ -23,6 +23,13 @@ use winit::{
 
 use crate::draw::Rgb;
 
+pub const HEADER: usize = 0;
+pub const SIDEBAR: usize = 1;
+pub const MENU: usize = 2;
+pub const TOAST: usize = 3;
+pub const BG: usize = 4;
+const OVERLAYS: usize = 5;
+
 const VERT: &str = r#"#version 300 es
 uniform vec4 u_rect;
 uniform vec2 u_res;
@@ -71,9 +78,7 @@ pub struct Gpu {
     max_tex: u32,
     win: (u32, u32),
     image: Option<Tex>,
-    header: Option<Tex>,
-    sidebar: Option<Tex>,
-    menu: Option<Tex>,
+    overlays: [Option<Tex>; OVERLAYS],
 }
 
 impl Gpu {
@@ -143,9 +148,7 @@ impl Gpu {
             max_tex,
             win: (1, 1),
             image: None,
-            header: None,
-            sidebar: None,
-            menu: None,
+            overlays: Default::default(),
         };
         Ok((Rc::new(window), gpu))
     }
@@ -183,11 +186,11 @@ impl Gpu {
         }
     }
 
-    pub fn set_header(&mut self, px: &[u32], w: u32, h: u32) {
+    pub fn set_overlay(&mut self, slot: usize, px: &[u32], w: u32, h: u32) {
         unsafe {
             upload(
                 &self.gl,
-                &mut self.header,
+                &mut self.overlays[slot],
                 w as i32,
                 h as i32,
                 &to_rgba(px),
@@ -196,30 +199,8 @@ impl Gpu {
         }
     }
 
-    pub fn set_sidebar(&mut self, px: &[u32], w: u32, h: u32) {
-        unsafe {
-            upload(
-                &self.gl,
-                &mut self.sidebar,
-                w as i32,
-                h as i32,
-                &to_rgba(px),
-                false,
-            )
-        }
-    }
-
-    pub fn set_menu(&mut self, px: &[u32], w: u32, h: u32) {
-        unsafe {
-            upload(
-                &self.gl,
-                &mut self.menu,
-                w as i32,
-                h as i32,
-                &to_rgba(px),
-                false,
-            )
-        }
+    pub fn overlay_size(&self, slot: usize) -> Option<(i32, i32)> {
+        self.overlays[slot].as_ref().map(|t| (t.w, t.h))
     }
 
     pub fn begin(&mut self, w: u32, h: u32, bg: Rgb) {
@@ -236,7 +217,13 @@ impl Gpu {
             );
             gl.clear(glow::COLOR_BUFFER_BIT);
             gl.enable(glow::BLEND);
-            gl.blend_func(glow::SRC_ALPHA, glow::ONE_MINUS_SRC_ALPHA);
+            // Альфа фреймбуфера всегда остаётся 1, иначе композитор просвечивает рабочий стол.
+            gl.blend_func_separate(
+                glow::SRC_ALPHA,
+                glow::ONE_MINUS_SRC_ALPHA,
+                glow::ONE,
+                glow::ONE_MINUS_SRC_ALPHA,
+            );
             gl.use_program(Some(self.program));
             gl.bind_vertex_array(Some(self.vao));
             gl.active_texture(glow::TEXTURE0);
@@ -265,31 +252,20 @@ impl Gpu {
         unsafe { self.gl.disable(glow::SCISSOR_TEST) };
     }
 
-    pub fn draw_header(&self) {
-        if let Some(tex) = &self.header {
-            self.quad(tex, (0.0, 0.0, tex.w as f32, tex.h as f32), 1.0, 0.0);
-        }
-    }
-
-    pub fn draw_sidebar(&self, x: i32, y: i32) {
-        if let Some(tex) = &self.sidebar {
-            self.quad(
-                tex,
-                (x as f32, y as f32, tex.w as f32, tex.h as f32),
-                1.0,
-                0.0,
-            );
-        }
-    }
-
-    pub fn draw_menu(&self, x: i32, y: i32, alpha: f32) {
-        if let Some(tex) = &self.menu {
+    pub fn draw_overlay(&self, slot: usize, x: i32, y: i32, alpha: f32) {
+        if let Some(tex) = &self.overlays[slot] {
             self.quad(
                 tex,
                 (x as f32, y as f32, tex.w as f32, tex.h as f32),
                 alpha,
                 0.0,
             );
+        }
+    }
+
+    pub fn draw_overlay_scaled(&self, slot: usize, rect: (f32, f32, f32, f32), alpha: f32) {
+        if let Some(tex) = &self.overlays[slot] {
+            self.quad(tex, rect, alpha, 0.0);
         }
     }
 
@@ -312,7 +288,7 @@ impl Gpu {
 fn to_rgba(px: &[u32]) -> Vec<u8> {
     let mut v = Vec::with_capacity(px.len() * 4);
     for &p in px {
-        v.extend_from_slice(&[(p >> 16) as u8, (p >> 8) as u8, p as u8, 255]);
+        v.extend_from_slice(&[(p >> 16) as u8, (p >> 8) as u8, p as u8, (p >> 24) as u8]);
     }
     v
 }

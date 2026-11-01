@@ -60,4 +60,8 @@ impl Anim {
         }
         self.dirty = true;
     }
+
+    pub fn current(&self) -> &RgbaImage {
+        &self.frames[self.index]
+    }
 }

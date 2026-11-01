@@ -5,55 +5,7 @@ use std::{
 
 use image::ImageFormat;
 
-pub struct Labels {
-    pub name: &'static str,
-    pub folder: &'static str,
-    pub resolution: &'static str,
-    pub format: &'static str,
-    pub size: &'static str,
-    pub created: &'static str,
-    pub modified: &'static str,
-    transparent: &'static str,
-    unknown: &'static str,
-    units: [&'static str; 4],
-    pub ru: bool,
-}
-
-static EN: Labels = Labels {
-    name: "Name",
-    folder: "Folder",
-    resolution: "Image size",
-    format: "Image format",
-    size: "File size",
-    created: "File created",
-    modified: "File modified",
-    transparent: "transparent",
-    unknown: "—",
-    units: ["B", "KB", "MB", "GB"],
-    ru: false,
-};
-
-static RU: Labels = Labels {
-    name: "Имя",
-    folder: "Папка",
-    resolution: "Размер изображения",
-    format: "Формат изображения",
-    size: "Размер файла",
-    created: "Файл создан",
-    modified: "Файл изменён",
-    transparent: "прозрачное",
-    unknown: "—",
-    units: ["Б", "КБ", "МБ", "ГБ"],
-    ru: true,
-};
-
-pub fn labels() -> &'static Labels {
-    let lang = ["LC_ALL", "LC_MESSAGES", "LANG"]
-        .iter()
-        .find_map(|k| std::env::var(k).ok().filter(|v| !v.is_empty()))
-        .unwrap_or_default();
-    if lang.starts_with("ru") { &RU } else { &EN }
-}
+use crate::i18n::tr;
 
 pub struct Info {
     pub name: String,
@@ -73,7 +25,6 @@ impl Info {
         format: Option<ImageFormat>,
         has_alpha: bool,
     ) -> Self {
-        let lb = labels();
         let meta = std::fs::metadata(path).ok();
 
         let abs = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
@@ -93,10 +44,10 @@ impl Info {
             Some(ImageFormat::WebP) => "WebP".to_string(),
             Some(ImageFormat::Bmp) => "BMP".to_string(),
             Some(other) => format!("{other:?}"),
-            None => lb.unknown.to_string(),
+            None => tr("info.unknown").to_string(),
         };
         if has_alpha {
-            fmt = format!("{fmt}, {}", lb.transparent);
+            fmt = format!("{fmt}, {}", tr("info.transparent"));
         }
 
         Self {
@@ -110,17 +61,18 @@ impl Info {
             format: fmt,
             size: meta
                 .as_ref()
-                .map(|m| human_size(m.len(), lb))
-                .unwrap_or_else(|| lb.unknown.to_string()),
-            created: local_time(meta.as_ref().and_then(|m| m.created().ok()), lb),
-            modified: local_time(meta.as_ref().and_then(|m| m.modified().ok()), lb),
+                .map(|m| human_size(m.len()))
+                .unwrap_or_else(|| tr("info.unknown").to_string()),
+            created: local_time(meta.as_ref().and_then(|m| m.created().ok())),
+            modified: local_time(meta.as_ref().and_then(|m| m.modified().ok())),
         }
     }
 }
 
-fn human_size(n: u64, lb: &Labels) -> String {
+fn human_size(n: u64) -> String {
+    let units = [tr("unit.b"), tr("unit.kb"), tr("unit.mb"), tr("unit.gb")];
     if n < 1000 {
-        return format!("{n} {}", lb.units[0]);
+        return format!("{n} {}", units[0]);
     }
     let mut v = n as f64;
     let mut i = 0;
@@ -128,12 +80,11 @@ fn human_size(n: u64, lb: &Labels) -> String {
         v /= 1000.0;
         i += 1;
     }
-    let s = format!("{v:.1} {}", lb.units[i]);
-    if lb.ru { s.replace('.', ",") } else { s }
+    format!("{v:.1} {}", units[i]).replace('.', tr("number.decimal"))
 }
 
-fn local_time(t: Option<SystemTime>, lb: &Labels) -> String {
-    let unknown = || lb.unknown.to_string();
+fn local_time(t: Option<SystemTime>) -> String {
+    let unknown = || tr("info.unknown").to_string();
     let Some(t) = t else { return unknown() };
     let Ok(dur) = t.duration_since(UNIX_EPOCH) else {
         return unknown();
@@ -143,11 +94,11 @@ fn local_time(t: Option<SystemTime>, lb: &Labels) -> String {
     if unsafe { libc::localtime_r(&secs, &mut tm) }.is_null() {
         return unknown();
     }
-    let (y, mo, d) = (tm.tm_year + 1900, tm.tm_mon + 1, tm.tm_mday);
-    let (h, mi, s) = (tm.tm_hour, tm.tm_min, tm.tm_sec);
-    if lb.ru {
-        format!("{d:02}.{mo:02}.{y} {h:02}:{mi:02}:{s:02}")
-    } else {
-        format!("{y}-{mo:02}-{d:02} {h:02}:{mi:02}:{s:02}")
-    }
+    tr("date.format")
+        .replace("{y}", &(tm.tm_year + 1900).to_string())
+        .replace("{m}", &format!("{:02}", tm.tm_mon + 1))
+        .replace("{d}", &format!("{:02}", tm.tm_mday))
+        .replace("{H}", &format!("{:02}", tm.tm_hour))
+        .replace("{M}", &format!("{:02}", tm.tm_min))
+        .replace("{S}", &format!("{:02}", tm.tm_sec))
 }

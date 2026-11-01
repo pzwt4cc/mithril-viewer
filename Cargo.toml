@@ -4,10 +4,21 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+arboard = { version = "3.7.0", features = ["wayland-data-control"] }
 fontdue = "0.9.5"
 glow = "0.18.0"
 glutin = "0.32"
 glutin-winit = "0.5"
-image = { version = "0.25", default-features = false, features = ["jpeg", "png", "gif", "webp", "bmp"] }
+image = { version = "0.25", default-features = false, features = [
+    "jpeg",
+    "png",
+    "gif",
+    "webp",
+    "bmp",
+] }
 libc = "0.2.191"
+trash = "5.2.9"
 winit = "0.30"
+
+[profile.dev.package."*"]
+opt-level = 3
