@@ -1,6 +1,7 @@
 mod anim;
 mod config;
 mod draw;
+mod fonts;
 mod gpu;
 mod i18n;
 mod info;
@@ -30,6 +31,7 @@ use winit::{
 use anim::Anim;
 use config::{Config, DeleteMode};
 use draw::{Canvas, Rgb, ellipsize, lerp, text_width};
+use fonts::Fonts;
 use gpu::Gpu;
 use i18n::tr;
 use info::Info;
@@ -54,6 +56,8 @@ const R_PANEL: f32 = 10.0;
 const R_MENU: f32 = 9.0;
 const R_ITEM: f32 = 6.0;
 const R_BTN: f32 = 6.0;
+
+const ZOOM_STEP: f32 = 1.4;
 
 const SHADOW_PAD: f32 = 10.0;
 const SHADOW_BLUR: f32 = 8.0;
@@ -514,7 +518,7 @@ fn dir_icon(d: ResizeDirection) -> CursorIcon {
 #[allow(clippy::too_many_arguments)]
 fn draw_row(
     cv: &mut Canvas,
-    font: &Font,
+    font: &Fonts,
     x: f32,
     y: f32,
     w: f32,
@@ -531,11 +535,13 @@ fn draw_row(
 }
 
 struct App {
-    font: Font,
+    font: Fonts,
     config: Config,
     window: Option<Rc<Window>>,
     gpu: Option<Gpu>,
     path: Option<PathBuf>,
+    siblings: Vec<PathBuf>,
+    index: usize,
     src: Option<Source>,
     info: Option<Info>,
     image: Option<RgbaImage>,
@@ -570,13 +576,15 @@ struct App {
 }
 
 impl App {
-    fn new(font: Font, config: Config, proxy: EventLoopProxy<UserEvent>) -> Self {
+    fn new(font: Fonts, config: Config, proxy: EventLoopProxy<UserEvent>) -> Self {
         Self {
             font,
             config,
             window: None,
             gpu: None,
             path: None,
+            siblings: Vec::new(),
+            index: 0,
             src: None,
             info: None,
             image: None,
@@ -642,6 +650,94 @@ impl App {
         if let (Some(path), Some(src)) = (&self.path, self.src) {
             self.info = Some(Info::gather(path, src.dims, src.format, src.has_alpha));
         }
+    }
+
+    fn rescan(&mut self) {
+        let Some(path) = self.path.clone() else {
+            return;
+        };
+        let (list, index) = loader::siblings(&path);
+        self.siblings = list;
+        self.index = index;
+    }
+
+    fn open_path(&mut self, path: PathBuf) -> bool {
+        match loader::load(&path) {
+            Ok(l) => {
+                let dims = l.image.dimensions();
+                if let Some(gpu) = &mut self.gpu {
+                    gpu.set_image(&l.image);
+                }
+                self.src = Some(Source {
+                    dims,
+                    format: l.format,
+                    has_alpha: l.has_alpha,
+                });
+                self.info = Some(Info::gather(&path, dims, l.format, l.has_alpha));
+                let title = path
+                    .file_name()
+                    .map(|n| n.to_string_lossy().into_owned())
+                    .unwrap_or_else(|| "Mithril".into());
+                if let Some(window) = &self.window {
+                    window.set_title(&title);
+                }
+                self.image = Some(l.image);
+                self.anim = l.anim;
+                self.path = Some(path);
+                self.modified = false;
+                self.pending_delete = None;
+                self.view = View::default();
+                self.angle = Fade::new(0.0);
+                self.appear = Fade { v: 0.0, to: 1.0 };
+                self.header_dirty = true;
+                self.sidebar_dirty = true;
+                self.redraw();
+                true
+            }
+            Err(e) => {
+                eprintln!("mithril: {}: {e}", path.display());
+                self.show_toast(format!("{}: {e}", tr("toast.open_failed")));
+                false
+            }
+        }
+    }
+
+    fn navigate(&mut self, delta: isize) {
+        if self.crop.is_some() || self.dialog.is_some() || self.siblings.len() < 2 {
+            return;
+        }
+        if self.modified {
+            self.show_toast(tr("toast.unsaved_nav").to_string());
+            return;
+        }
+        self.close_menu();
+        let n = self.siblings.len() as isize;
+        let mut i = self.index as isize;
+        for _ in 1..n {
+            i = (i + delta).rem_euclid(n);
+            let path = self.siblings[i as usize].clone();
+            if self.open_path(path) {
+                self.index = i as usize;
+                return;
+            }
+        }
+    }
+
+    fn after_delete(&mut self) {
+        self.modified = false;
+        if self.index < self.siblings.len() {
+            self.siblings.remove(self.index);
+        }
+        while !self.siblings.is_empty() {
+            let i = self.index.min(self.siblings.len() - 1);
+            let path = self.siblings[i].clone();
+            if self.open_path(path) {
+                self.index = i;
+                return;
+            }
+            self.siblings.remove(i);
+        }
+        self.exit_requested = true;
     }
 
     fn open_folder(&self) {
@@ -816,7 +912,7 @@ impl App {
             DeleteMode::Permanent => std::fs::remove_file(&path).map_err(|e| e.to_string()),
         };
         match result {
-            Ok(()) => self.exit_requested = true,
+            Ok(()) => self.after_delete(),
             Err(e) => {
                 self.pending_delete = None;
                 self.show_toast(format!("{}: {e}", tr("toast.delete_failed")));
@@ -841,7 +937,7 @@ impl App {
         let vp = (vw, vh);
         let old = self.view.scale(imgd, vp);
         let min = fit_scale(imgd, vp);
-        let new = (old * 1.25f32.powf(steps)).clamp(min, 32.0);
+        let new = (old * ZOOM_STEP.powf(steps)).clamp(min, 32.0);
 
         let cx = px as f32 - (vx as f32 + vw as f32 / 2.0);
         let cy = py as f32 - (vy as f32 + vh as f32 / 2.0);
@@ -1811,6 +1907,12 @@ impl ApplicationHandler<UserEvent> for App {
                         self.close_menu();
                         self.request_delete();
                     }
+                    PhysicalKey::Code(KeyCode::ArrowRight | KeyCode::PageDown) => {
+                        self.navigate(1);
+                    }
+                    PhysicalKey::Code(KeyCode::ArrowLeft | KeyCode::PageUp) => {
+                        self.navigate(-1);
+                    }
                     PhysicalKey::Code(KeyCode::KeyI) => self.toggle_sidebar(),
                     _ => {}
                 }
@@ -1977,6 +2079,19 @@ impl ApplicationHandler<UserEvent> for App {
 
                 self.update_pointer();
             }
+            WindowEvent::DroppedFile(path) => {
+                if self.dialog.is_some() || self.crop.is_some() {
+                    return;
+                }
+                if self.modified {
+                    self.show_toast(tr("toast.unsaved_nav").to_string());
+                    return;
+                }
+                self.close_menu();
+                if self.open_path(path) {
+                    self.rescan();
+                }
+            }
             WindowEvent::RedrawRequested => self.render(),
             _ => {}
         }
@@ -1984,11 +2099,13 @@ impl ApplicationHandler<UserEvent> for App {
 }
 
 fn main() {
-    let font = Font::from_bytes(
-        &include_bytes!("../assets/InterVariable.ttf")[..],
-        FontSettings::default(),
-    )
-    .expect("не удалось загрузить шрифт");
+    let font = Fonts::new(
+        Font::from_bytes(
+            &include_bytes!("../assets/InterVariable.ttf")[..],
+            FontSettings::default(),
+        )
+        .expect("не удалось загрузить шрифт"),
+    );
 
     let config = config::load();
     i18n::init(config.language.as_deref());
@@ -2009,6 +2126,7 @@ fn main() {
                 app.image = Some(l.image);
                 app.anim = l.anim;
                 app.path = Some(path);
+                app.rescan();
             }
             Err(e) => eprintln!("mithril: {}: {e}", path.display()),
         }

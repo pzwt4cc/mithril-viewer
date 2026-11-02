@@ -1,8 +1,7 @@
-use fontdue::Font;
-
 use crate::{
     ACCENT, DIM, R_BTN, R_MENU, R_PILL, SHADOW_PAD, TEXT,
     draw::{Canvas, Rgb, text_width, wrap},
+    fonts::Fonts,
     i18n::tr,
     surface,
 };
@@ -18,13 +17,13 @@ fn contains(r: Rect, p: (f32, f32)) -> bool {
     p.0 >= r.0 && p.0 < r.0 + r.2 && p.1 >= r.1 && p.1 < r.1 + r.3
 }
 
-fn button_width(font: &Font, label: &str, s: f32) -> f32 {
+fn button_width(font: &Fonts, label: &str, s: f32) -> f32 {
     text_width(font, label, 13.5 * s) + 32.0 * s
 }
 
 fn draw_button(
     cv: &mut Canvas,
-    font: &Font,
+    font: &Fonts,
     r: Rect,
     label: &str,
     primary: bool,
@@ -65,7 +64,7 @@ pub struct Dialog {
 }
 
 impl Dialog {
-    pub fn unsaved(font: &Font, scale: f32) -> Self {
+    pub fn unsaved(font: &Fonts, scale: f32) -> Self {
         let s = scale;
         let w = 400.0 * s;
         let pad = 22.0 * s;
@@ -121,7 +120,7 @@ impl Dialog {
             .map(|(_, a, _)| *a)
     }
 
-    pub fn draw(&self, cv: &mut Canvas, font: &Font) {
+    pub fn draw(&self, cv: &mut Canvas, font: &Fonts) {
         let s = self.scale;
         surface(cv, 0.0, 0.0, self.w as f32, self.h as f32, R_MENU * s, s);
 
@@ -164,7 +163,7 @@ pub struct CropBar {
 }
 
 impl CropBar {
-    pub fn new(font: &Font, scale: f32) -> Self {
+    pub fn new(font: &Fonts, scale: f32) -> Self {
         let s = scale;
         let (pad, h, btn_h, gap) = (16.0 * s, 46.0 * s, 30.0 * s, 8.0 * s);
         let label_w = text_width(font, "00000 × 00000", 13.5 * s);
@@ -214,7 +213,7 @@ impl CropBar {
             .map(|(_, a, _)| *a)
     }
 
-    pub fn draw(&self, cv: &mut Canvas, font: &Font) {
+    pub fn draw(&self, cv: &mut Canvas, font: &Fonts) {
         let s = self.scale;
         surface(cv, 0.0, 0.0, self.w as f32, self.h as f32, R_PILL * s, s);
 

@@ -74,5 +74,8 @@ pub fn save(cfg: &Config) {
         DeleteMode::Permanent => "permanent",
     };
     let lang = cfg.language.as_deref().unwrap_or("auto");
-    let _ = fs::write(path, format!("delete_mode = {mode}\nlanguage = {lang}\n"));
+    let tmp = path.with_extension("conf.tmp");
+    if fs::write(&tmp, format!("delete_mode = {mode}\nlanguage = {lang}\n")).is_ok() {
+        let _ = fs::rename(&tmp, &path);
+    }
 }

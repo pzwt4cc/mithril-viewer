@@ -1,4 +1,10 @@
-use std::{error::Error, fs::File, io::BufReader, path::Path, time::Duration};
+use std::{
+    error::Error,
+    fs::File,
+    io::BufReader,
+    path::{Path, PathBuf},
+    time::Duration,
+};
 
 use image::{
     AnimationDecoder, DynamicImage, ImageDecoder, ImageFormat, ImageReader, RgbaImage,
@@ -71,4 +77,59 @@ fn load_gif(path: &Path) -> Result<Option<Loaded>, Box<dyn Error>> {
         has_alpha,
         anim: Some(Anim::new(frames, delays)),
     }))
+}
+
+const EXTENSIONS: &[&str] = &["jpg", "jpeg", "png", "gif", "webp", "bmp"];
+
+fn is_supported(path: &Path) -> bool {
+    path.extension()
+        .and_then(|e| e.to_str())
+        .is_some_and(|e| EXTENSIONS.iter().any(|x| x.eq_ignore_ascii_case(e)))
+}
+
+fn natural_key(path: &Path) -> String {
+    let name = path
+        .file_name()
+        .map(|n| n.to_string_lossy().to_lowercase())
+        .unwrap_or_default();
+    let mut key = String::with_capacity(name.len() + 16);
+    let mut digits = String::new();
+    for c in name.chars() {
+        if c.is_ascii_digit() {
+            digits.push(c);
+            continue;
+        }
+        if !digits.is_empty() {
+            key.push_str(&format!("{digits:0>12}"));
+            digits.clear();
+        }
+        key.push(c);
+    }
+    if !digits.is_empty() {
+        key.push_str(&format!("{digits:0>12}"));
+    }
+    key
+}
+
+pub fn siblings(path: &Path) -> (Vec<PathBuf>, usize) {
+    let dir = match path.parent() {
+        Some(d) if !d.as_os_str().is_empty() => d,
+        _ => Path::new("."),
+    };
+    let mut list: Vec<PathBuf> = std::fs::read_dir(dir)
+        .into_iter()
+        .flatten()
+        .flatten()
+        .map(|e| e.path())
+        .filter(|p| is_supported(p) && p.is_file())
+        .collect();
+    list.sort_by_cached_key(|p| natural_key(p));
+    let index = list
+        .iter()
+        .position(|p| p.file_name() == path.file_name())
+        .unwrap_or_else(|| {
+            list.push(path.to_path_buf());
+            list.len() - 1
+        });
+    (list, index)
 }

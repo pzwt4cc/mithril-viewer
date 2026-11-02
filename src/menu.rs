@@ -1,9 +1,8 @@
-use fontdue::Font;
-
 use crate::{
     ACCENT, BORDER, DIM, Fade, HOVER, R_ITEM, R_MENU, SHADOW_PAD, TEXT,
     config::DeleteMode,
     draw::{Canvas, text_width},
+    fonts::Fonts,
     i18n::{available, tr},
     surface,
 };
@@ -200,7 +199,7 @@ impl Menu {
         }
     }
 
-    pub fn draw(&self, cv: &mut Canvas, font: &Font) {
+    pub fn draw(&self, cv: &mut Canvas, font: &Fonts) {
         let s = self.scale;
         let (mx, my, mw, mh) = (self.x as f32, self.y as f32, self.w as f32, self.h as f32);
         surface(cv, mx, my, mw, mh, R_MENU * s, s);

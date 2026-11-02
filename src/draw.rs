@@ -1,4 +1,4 @@
-use fontdue::Font;
+use crate::fonts::{Fonts, invisible};
 
 pub type Rgb = [u8; 3];
 
@@ -160,9 +160,9 @@ impl Canvas<'_> {
         );
     }
 
-    pub fn text(&mut self, font: &Font, s: &str, x: f32, baseline: f32, px: f32, c: Rgb) {
+    pub fn text(&mut self, font: &Fonts, s: &str, x: f32, baseline: f32, px: f32, c: Rgb) {
         let mut pen = x;
-        for ch in s.chars() {
+        for ch in s.chars().filter(|c| !invisible(*c)) {
             let (m, bitmap) = font.rasterize(ch, px);
             let gx = (pen + m.xmin as f32).round() as i32;
             let gy = (baseline - m.height as f32 - m.ymin as f32).round() as i32;
@@ -177,11 +177,11 @@ impl Canvas<'_> {
     }
 }
 
-pub fn text_width(font: &Font, s: &str, px: f32) -> f32 {
+pub fn text_width(font: &Fonts, s: &str, px: f32) -> f32 {
     s.chars().map(|c| font.metrics(c, px).advance_width).sum()
 }
 
-pub fn ellipsize(font: &Font, s: &str, px: f32, max_w: f32) -> String {
+pub fn ellipsize(font: &Fonts, s: &str, px: f32, max_w: f32) -> String {
     if text_width(font, s, px) <= max_w {
         return s.to_owned();
     }
@@ -205,7 +205,7 @@ pub fn lerp(a: Rgb, b: Rgb, t: f32) -> Rgb {
     [m(a[0], b[0]), m(a[1], b[1]), m(a[2], b[2])]
 }
 
-pub fn wrap(font: &Font, s: &str, px: f32, max_w: f32) -> Vec<String> {
+pub fn wrap(font: &Fonts, s: &str, px: f32, max_w: f32) -> Vec<String> {
     let mut lines = Vec::new();
     let mut cur = String::new();
     for word in s.split_whitespace() {
