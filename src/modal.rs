@@ -1,6 +1,7 @@
 use crate::{
-    ACCENT, DIM, R_BTN, R_MENU, R_PILL, SHADOW_PAD, TEXT,
-    draw::{Canvas, Rgb, text_width, wrap},
+    DIM, R_BTN, R_MENU, R_PILL, SHADOW_PAD, TEXT,
+    config::accent,
+    draw::{Canvas, Rgb, lerp, text_width, wrap},
     fonts::Fonts,
     i18n::tr,
     surface,
@@ -9,7 +10,6 @@ use crate::{
 const BTN_BG: Rgb = [0x45, 0x49, 0x51];
 const BTN_BG_HOVER: Rgb = [0x55, 0x5a, 0x64];
 const ON_ACCENT: Rgb = [0x1c, 0x1f, 0x26];
-const ACCENT_HOVER: Rgb = [0xc4, 0xdd, 0x9b];
 
 type Rect = (f32, f32, f32, f32);
 
@@ -30,9 +30,10 @@ fn draw_button(
     hover: bool,
     s: f32,
 ) {
+    let acc = accent();
     let fill = match (primary, hover) {
-        (true, false) => ACCENT,
-        (true, true) => ACCENT_HOVER,
+        (true, false) => acc,
+        (true, true) => lerp(acc, [255, 255, 255], 0.28),
         (false, false) => BTN_BG,
         (false, true) => BTN_BG_HOVER,
     };

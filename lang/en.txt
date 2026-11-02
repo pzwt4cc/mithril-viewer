@@ -41,5 +41,5 @@ toast.print_failed = Couldn't print
 toast.save_failed = Couldn't save
 toast.crop_gif = Can't crop an animated GIF
 toast.open_failed = Couldn't open
-toast.unsaved_nav = Unsaved changes. Close the window to save or discard them
 settings.opacity = Window opacity
+settings.accent = Accent color

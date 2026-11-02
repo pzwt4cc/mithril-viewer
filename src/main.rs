@@ -29,7 +29,7 @@ use winit::{
 };
 
 use anim::Anim;
-use config::{Config, DeleteMode};
+use config::{Config, DeleteMode, accent};
 use draw::{Canvas, Rgb, ellipsize, lerp, text_width};
 use fonts::Fonts;
 use gpu::Gpu;
@@ -47,7 +47,6 @@ const HOVER: Rgb = [0x4a, 0x4e, 0x57];
 const ACTIVE: Rgb = [0x56, 0x5e, 0x73];
 const TEXT: Rgb = [0xee, 0xef, 0xf2];
 const DIM: Rgb = [0xa3, 0xa8, 0xb1];
-const ACCENT: Rgb = [0xb0, 0xd0, 0x80];
 const DANGER: Rgb = [0xd9, 0x4f, 0x4f];
 
 const R_WINDOW: f32 = 14.0;
@@ -143,6 +142,12 @@ struct Toast {
 
 enum UserEvent {
     Printed(Result<(), String>),
+}
+
+enum After {
+    Exit,
+    Navigate(isize),
+    Open(PathBuf),
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -573,6 +578,9 @@ struct App {
     menu_dirty: bool,
     last_frame: Instant,
     last_vp: (u32, u32),
+    after: After,
+    sidebar_ready: bool,
+    anim_active: bool,
 }
 
 impl App {
@@ -616,6 +624,9 @@ impl App {
             menu_dirty: false,
             last_frame: Instant::now(),
             last_vp: (0, 0),
+            after: After::Exit,
+            sidebar_ready: false,
+            anim_active: false,
         }
     }
 
@@ -707,7 +718,8 @@ impl App {
             return;
         }
         if self.modified {
-            self.show_toast(tr("toast.unsaved_nav").to_string());
+            self.after = After::Navigate(delta);
+            self.open_dialog();
             return;
         }
         self.close_menu();
@@ -783,6 +795,7 @@ impl App {
             self.config.language.as_deref(),
             self.config.delete_mode,
             self.config.opacity,
+            self.config.accent,
         );
         let (cx, cy, cw, ch) = lay.capsule();
         let anchor = ((cx + cw) as i32, (cy + ch + 6.0 * lay.scale) as i32);
@@ -832,6 +845,17 @@ impl App {
             Action::Copy => self.copy_image(),
             Action::Delete => self.request_delete(),
             Action::SetLanguage(code) => self.set_language(code),
+            Action::SetAccent(a) => {
+                self.config.accent = a;
+                config::set_accent(a);
+                config::save(&self.config);
+                self.header_dirty = true;
+                self.sidebar_dirty = true;
+                if let Some(c) = &mut self.crop {
+                    c.bar_dirty = true;
+                }
+                self.redraw();
+            }
             Action::SetOpacity(p) => {
                 self.config.opacity = p;
                 config::save(&self.config);
@@ -1141,6 +1165,7 @@ impl App {
 
     fn close_dialog(&mut self) {
         if self.dialog.take().is_some() {
+            self.after = After::Exit;
             self.redraw();
         }
     }
@@ -1157,14 +1182,32 @@ impl App {
     fn dialog_action(&mut self, a: DialogAction, el: &ActiveEventLoop) {
         match a {
             DialogAction::Cancel => self.close_dialog(),
-            DialogAction::Discard => el.exit(),
+            DialogAction::Discard => self.finish_dialog(el),
             DialogAction::Save => match self.save_copy() {
-                Ok(_) => el.exit(),
+                Ok(_) => self.finish_dialog(el),
                 Err(e) => {
                     self.close_dialog();
                     self.show_toast(format!("{}: {e}", tr("toast.save_failed")));
                 }
             },
+        }
+    }
+
+    fn finish_dialog(&mut self, el: &ActiveEventLoop) {
+        match std::mem::replace(&mut self.after, After::Exit) {
+            After::Exit => el.exit(),
+            After::Navigate(delta) => {
+                self.close_dialog();
+                self.modified = false;
+                self.navigate(delta);
+            }
+            After::Open(path) => {
+                self.close_dialog();
+                self.modified = false;
+                if self.open_path(path) {
+                    self.rescan();
+                }
+            }
         }
     }
 
@@ -1330,7 +1373,7 @@ impl App {
 
             let (gx, gy) = (x + pad, y + h / 2.0);
             let dark: Rgb = [0x2b, 0x2d, 0x31];
-            cv.round_rect(gx, gy - 7.0 * s, icon_w, 14.0 * s, 3.5 * s, ACCENT);
+            cv.round_rect(gx, gy - 7.0 * s, icon_w, 14.0 * s, 3.5 * s, accent());
             cv.line(
                 gx + 2.5 * s,
                 gy + 4.2 * s,
@@ -1399,7 +1442,7 @@ impl App {
             lerp(HOVER, ACTIVE, self.side.v),
             hv.max(self.side.v),
         );
-        let ic = lerp(TEXT, ACCENT, self.side.v);
+        let ic = lerp(TEXT, accent(), self.side.v);
         cv.ring(ix, iy, 6.5 * s, 1.6 * s, ic);
         cv.circle(ix, iy - 3.0 * s, 1.0 * s, ic);
         cv.line(ix, iy - 0.6 * s, ix, iy + 3.2 * s, 1.6 * s, ic);
@@ -1486,7 +1529,11 @@ impl App {
 
     fn render(&mut self) {
         let now = Instant::now();
-        let dt = now.duration_since(self.last_frame).as_secs_f32().min(0.05);
+        let dt = if self.anim_active {
+            now.duration_since(self.last_frame).as_secs_f32().min(0.05)
+        } else {
+            1.0 / 60.0
+        };
         self.last_frame = now;
         let mut busy = false;
 
@@ -1571,7 +1618,8 @@ impl App {
         }
         if self.sidebar_dirty {
             self.sidebar_dirty = false;
-            if lay.sidebar_w > 0 || self.sidebar_open() {
+            if lay.sidebar_w > 0 || self.sidebar_open() || !self.sidebar_ready {
+                self.sidebar_ready = true;
                 let sw = lay.sidebar_full as u32;
                 let sh = (h as i32 - lay.side_oy()).max(1) as u32;
                 let mut sb = vec![0u32; (sw * sh) as usize];
@@ -1798,6 +1846,10 @@ impl App {
         }
         gpu.present();
 
+        self.anim_active = busy;
+        if now.elapsed() > Duration::from_millis(30) {
+            self.last_frame = Instant::now() - Duration::from_millis(16);
+        }
         if busy {
             self.redraw();
         }
@@ -2029,10 +2081,7 @@ impl ApplicationHandler<UserEvent> for App {
                     return;
                 }
                 if self.menu.is_some() {
-                    let action = self
-                        .menu
-                        .as_ref()
-                        .and_then(|m| m.item_at(self.cursor).and_then(|i| m.action_at(i)));
+                    let action = self.menu.as_ref().and_then(|m| m.action_under(self.cursor));
                     self.close_menu();
                     if let Some(a) = action {
                         self.apply(a);
@@ -2115,7 +2164,8 @@ impl ApplicationHandler<UserEvent> for App {
                     return;
                 }
                 if self.modified {
-                    self.show_toast(tr("toast.unsaved_nav").to_string());
+                    self.after = After::Open(path);
+                    self.open_dialog();
                     return;
                 }
                 self.close_menu();
@@ -2139,6 +2189,7 @@ fn main() {
     );
 
     let config = config::load();
+    config::set_accent(config.accent);
     i18n::init(config.language.as_deref());
 
     let event_loop = EventLoop::<UserEvent>::with_user_event().build().unwrap();
