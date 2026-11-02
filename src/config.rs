@@ -9,6 +9,7 @@ pub enum DeleteMode {
 pub struct Config {
     pub delete_mode: DeleteMode,
     pub language: Option<String>,
+    pub opacity: u8,
 }
 
 impl Default for Config {
@@ -16,6 +17,7 @@ impl Default for Config {
         Self {
             delete_mode: DeleteMode::Trash,
             language: None,
+            opacity: 100,
         }
     }
 }
@@ -58,6 +60,11 @@ pub fn load() -> Config {
             "language" if !v.is_empty() && !v.eq_ignore_ascii_case("auto") => {
                 cfg.language = Some(v.to_lowercase());
             }
+            "opacity" => {
+                if let Ok(p) = v.trim_end_matches('%').parse::<u8>() {
+                    cfg.opacity = p.clamp(40, 100);
+                }
+            }
             _ => {}
         }
     }
@@ -75,7 +82,15 @@ pub fn save(cfg: &Config) {
     };
     let lang = cfg.language.as_deref().unwrap_or("auto");
     let tmp = path.with_extension("conf.tmp");
-    if fs::write(&tmp, format!("delete_mode = {mode}\nlanguage = {lang}\n")).is_ok() {
+    if fs::write(
+        &tmp,
+        format!(
+            "delete_mode = {mode}\nlanguage = {lang}\nopacity = {}\n",
+            cfg.opacity
+        ),
+    )
+    .is_ok()
+    {
         let _ = fs::rename(&tmp, &path);
     }
 }

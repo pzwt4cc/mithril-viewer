@@ -21,8 +21,6 @@ use winit::{
     window::{Window, WindowAttributes},
 };
 
-use crate::draw::Rgb;
-
 pub const HEADER: usize = 0;
 pub const SIDEBAR: usize = 1;
 pub const MENU: usize = 2;
@@ -52,14 +50,23 @@ void main() {
 "#;
 
 const FRAG: &str = r#"#version 300 es
-precision mediump float;
+precision highp float;
 uniform sampler2D u_tex;
 uniform float u_alpha;
+uniform vec2 u_res;
+uniform float u_corner;
 in vec2 v_uv;
 out vec4 o_color;
 void main() {
     vec4 c = texture(u_tex, v_uv);
-    o_color = vec4(c.rgb, c.a * u_alpha);
+    float a = c.a * u_alpha;
+    if (u_corner > 0.0) {
+        vec2 p = vec2(gl_FragCoord.x, u_res.y - gl_FragCoord.y) - 0.5 * u_res;
+        vec2 q = abs(p) - (0.5 * u_res - vec2(u_corner));
+        float d = length(max(q, vec2(0.0))) + min(max(q.x, q.y), 0.0) - u_corner;
+        a *= clamp(0.5 - d, 0.0, 1.0);
+    }
+    o_color = vec4(c.rgb, a);
 }
 "#;
 
@@ -79,6 +86,7 @@ pub struct Gpu {
     u_res: Option<glow::UniformLocation>,
     u_alpha: Option<glow::UniformLocation>,
     u_angle: Option<glow::UniformLocation>,
+    u_corner: Option<glow::UniformLocation>,
     max_tex: u32,
     win: (u32, u32),
     image: Option<Tex>,
@@ -93,9 +101,22 @@ impl Gpu {
         let (window, config) = DisplayBuilder::new()
             .with_window_attributes(Some(attrs.clone()))
             .with_preference(ApiPreference::PreferEgl)
-            .build(el, ConfigTemplateBuilder::new(), |mut configs| {
-                configs.next().expect("нет подходящей GL-конфигурации")
-            })
+            .build(
+                el,
+                ConfigTemplateBuilder::new().with_alpha_size(8),
+                |configs| {
+                    let mut first = None;
+                    for c in configs {
+                        if c.supports_transparency().unwrap_or(false) {
+                            return c;
+                        }
+                        if first.is_none() {
+                            first = Some(c);
+                        }
+                    }
+                    first.expect("нет подходящей GL-конфигурации")
+                },
+            )
             .map_err(|e| e.to_string())?;
         let window = match window {
             Some(w) => w,
@@ -128,15 +149,18 @@ impl Gpu {
 
         let gl =
             unsafe { glow::Context::from_loader_function_cstr(|s| display.get_proc_address(s)) };
-        let (program, vao, u_rect, u_res, u_alpha, u_angle, max_tex) = unsafe {
+        let (program, vao, u_rect, u_res, u_alpha, u_angle, u_corner, max_tex) = unsafe {
             let program = build_program(&gl)?;
             let vao = gl.create_vertex_array()?;
             let u_rect = gl.get_uniform_location(program, "u_rect");
             let u_res = gl.get_uniform_location(program, "u_res");
             let u_alpha = gl.get_uniform_location(program, "u_alpha");
             let u_angle = gl.get_uniform_location(program, "u_angle");
+            let u_corner = gl.get_uniform_location(program, "u_corner");
             let max_tex = gl.get_parameter_i32(glow::MAX_TEXTURE_SIZE).max(1024) as u32;
-            (program, vao, u_rect, u_res, u_alpha, u_angle, max_tex)
+            (
+                program, vao, u_rect, u_res, u_alpha, u_angle, u_corner, max_tex,
+            )
         };
 
         let gpu = Self {
@@ -149,6 +173,7 @@ impl Gpu {
             u_res,
             u_alpha,
             u_angle,
+            u_corner,
             max_tex,
             win: (1, 1),
             image: None,
@@ -207,18 +232,13 @@ impl Gpu {
         self.overlays[slot].as_ref().map(|t| (t.w, t.h))
     }
 
-    pub fn begin(&mut self, w: u32, h: u32, bg: Rgb) {
+    pub fn begin(&mut self, w: u32, h: u32, corner: f32) {
         self.win = (w, h);
         unsafe {
             let gl = &self.gl;
             gl.viewport(0, 0, w as i32, h as i32);
             gl.disable(glow::SCISSOR_TEST);
-            gl.clear_color(
-                bg[0] as f32 / 255.0,
-                bg[1] as f32 / 255.0,
-                bg[2] as f32 / 255.0,
-                1.0,
-            );
+            gl.clear_color(0.0, 0.0, 0.0, 0.0);
             gl.clear(glow::COLOR_BUFFER_BIT);
             gl.enable(glow::BLEND);
             gl.blend_func_separate(
@@ -231,6 +251,7 @@ impl Gpu {
             gl.bind_vertex_array(Some(self.vao));
             gl.active_texture(glow::TEXTURE0);
             gl.uniform_2_f32(self.u_res.as_ref(), w as f32, h as f32);
+            gl.uniform_1_f32(self.u_corner.as_ref(), corner);
         }
     }
 

@@ -38,7 +38,6 @@ use info::Info;
 use menu::{Action, Menu};
 use modal::{BarAction, CropBar, Dialog, DialogAction};
 
-const BG: Rgb = [0x2b, 0x2d, 0x31];
 const SURF_TOP: Rgb = [0x3b, 0x3e, 0x44];
 const SURF_BOT: Rgb = [0x36, 0x39, 0x3f];
 const EDGE_TOP: Rgb = [0x4b, 0x4f, 0x57];
@@ -48,9 +47,10 @@ const HOVER: Rgb = [0x4a, 0x4e, 0x57];
 const ACTIVE: Rgb = [0x56, 0x5e, 0x73];
 const TEXT: Rgb = [0xee, 0xef, 0xf2];
 const DIM: Rgb = [0xa3, 0xa8, 0xb1];
-const ACCENT: Rgb = [0x8a, 0xa8, 0xff];
+const ACCENT: Rgb = [0xb0, 0xd0, 0x80];
 const DANGER: Rgb = [0xd9, 0x4f, 0x4f];
 
+const R_WINDOW: f32 = 14.0;
 const R_PILL: f32 = 9.0;
 const R_PANEL: f32 = 10.0;
 const R_MENU: f32 = 9.0;
@@ -779,8 +779,11 @@ impl App {
 
     fn open_settings(&mut self) {
         let Some(lay) = self.layout() else { return };
-        let entries =
-            menu::settings_entries(self.config.language.as_deref(), self.config.delete_mode);
+        let entries = menu::settings_entries(
+            self.config.language.as_deref(),
+            self.config.delete_mode,
+            self.config.opacity,
+        );
         let (cx, cy, cw, ch) = lay.capsule();
         let anchor = ((cx + cw) as i32, (cy + ch + 6.0 * lay.scale) as i32);
         let mut menu = Menu::new(entries, anchor, lay.win, lay.scale, true);
@@ -829,6 +832,11 @@ impl App {
             Action::Copy => self.copy_image(),
             Action::Delete => self.request_delete(),
             Action::SetLanguage(code) => self.set_language(code),
+            Action::SetOpacity(p) => {
+                self.config.opacity = p;
+                config::save(&self.config);
+                self.redraw();
+            }
             Action::SetDeleteMode(mode) => {
                 self.config.delete_mode = mode;
                 self.pending_delete = None;
@@ -1303,11 +1311,21 @@ impl App {
         if let Some(info) = &self.info {
             let px = 14.0 * s;
             let (pad, icon_w, gap) = (14.0 * s, 16.0 * s, 9.0 * s);
-            let max_text = (lay.title_max_w() - 2.0 * pad - icon_w - gap).max(0.0);
+            let counter = if self.siblings.len() > 1 {
+                format!("{} / {}", self.index + 1, self.siblings.len())
+            } else {
+                String::new()
+            };
+            let cw = if counter.is_empty() {
+                0.0
+            } else {
+                gap + text_width(&self.font, &counter, px)
+            };
+            let max_text = (lay.title_max_w() - 2.0 * pad - icon_w - gap - cw).max(0.0);
             let name = ellipsize(&self.font, &info.name, px, max_text);
             let tw = text_width(&self.font, &name, px);
             let (x, y) = (MARGIN * s, MARGIN * s);
-            let (w, h) = (pad + icon_w + gap + tw + pad, PILL_H * s);
+            let (w, h) = (pad + icon_w + gap + tw + cw + pad, PILL_H * s);
             surface(cv, x, y, w, h, R_PILL * s, s);
 
             let (gx, gy) = (x + pad, y + h / 2.0);
@@ -1350,6 +1368,10 @@ impl App {
             if let Some(lm) = self.font.horizontal_line_metrics(px) {
                 let baseline = y + h / 2.0 + (lm.ascent + lm.descent) / 2.0;
                 cv.text(&self.font, &name, gx + icon_w + gap, baseline, px, TEXT);
+                if !counter.is_empty() {
+                    let cx = gx + icon_w + gap + tw + gap;
+                    cv.text(&self.font, &counter, cx, baseline, px, DIM);
+                }
             }
         }
 
@@ -1705,8 +1727,16 @@ impl App {
             gpu.set_overlay(gpu::DIALOG, db, *dw, *dh);
         }
 
-        gpu.begin(w, h, BG);
-        gpu.draw_overlay_scaled(gpu::BG, (0.0, 0.0, w as f32, h as f32), 1.0);
+        let square = self
+            .window
+            .as_ref()
+            .is_none_or(|win| win.is_maximized() || win.fullscreen().is_some());
+        gpu.begin(w, h, if square { 0.0 } else { R_WINDOW * lay.scale });
+        gpu.draw_overlay_scaled(
+            gpu::BG,
+            (0.0, 0.0, w as f32, h as f32),
+            self.config.opacity as f32 / 100.0,
+        );
 
         if let Some(img) = &self.image {
             let dims = img.dimensions();
@@ -1789,6 +1819,7 @@ impl ApplicationHandler<UserEvent> for App {
         let attrs = Window::default_attributes()
             .with_title(title)
             .with_decorations(false)
+            .with_transparent(true)
             .with_inner_size(LogicalSize::new(1000.0, 720.0))
             .with_min_inner_size(LogicalSize::new(420.0, 280.0));
 

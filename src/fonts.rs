@@ -83,15 +83,26 @@ impl Fonts {
         if self.primary.lookup_glyph_index(ch) != 0 {
             return (0, ch);
         }
+        if let Some(i) = self.loaded_with(ch) {
+            return (i, ch);
+        }
+        if let Some(i) = self.system_font_for(ch) {
+            return (i, ch);
+        }
         if let Some(a) = fold(ch) {
             if self.primary.lookup_glyph_index(a) != 0 {
                 return (0, a);
             }
         }
-        if let Some(i) = self.system_font_for(ch) {
-            return (i, ch);
-        }
         (0, ch)
+    }
+
+    fn loaded_with(&self, ch: char) -> Option<usize> {
+        self.extra
+            .borrow()
+            .iter()
+            .position(|f| f.lookup_glyph_index(ch) != 0)
+            .map(|i| i + 1)
     }
 
     fn system_font_for(&self, ch: char) -> Option<usize> {

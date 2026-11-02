@@ -24,6 +24,7 @@ pub enum Action {
     Delete,
     SetLanguage(&'static str),
     SetDeleteMode(DeleteMode),
+    SetOpacity(u8),
 }
 
 pub enum Entry {
@@ -76,7 +77,9 @@ pub fn context_entries(mode: DeleteMode) -> Vec<Entry> {
     ]
 }
 
-pub fn settings_entries(language: Option<&str>, mode: DeleteMode) -> Vec<Entry> {
+const OPACITIES: [(u8, &str); 4] = [(100, "100%"), (85, "85%"), (70, "70%"), (55, "55%")];
+
+pub fn settings_entries(language: Option<&str>, mode: DeleteMode, opacity: u8) -> Vec<Entry> {
     let mut v = vec![
         Entry::Section(tr("settings.language")),
         Entry::Item {
@@ -108,6 +111,16 @@ pub fn settings_entries(language: Option<&str>, mode: DeleteMode) -> Vec<Entry> 
         hint: "",
         checked: mode == DeleteMode::Permanent,
     });
+    v.push(Entry::Separator);
+    v.push(Entry::Section(tr("settings.opacity")));
+    for (value, label) in OPACITIES {
+        v.push(Entry::Item {
+            action: Action::SetOpacity(value),
+            label,
+            hint: "",
+            checked: opacity == value,
+        });
+    }
     v
 }
 

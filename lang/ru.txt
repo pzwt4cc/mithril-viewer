@@ -42,3 +42,4 @@ toast.save_failed = Не удалось сохранить
 toast.crop_gif = Нельзя обрезать анимированный GIF
 toast.open_failed = Не удалось открыть
 toast.unsaved_nav = Есть несохранённые изменения. Закройте окно, чтобы сохранить или отменить их
+settings.opacity = Прозрачность окна
