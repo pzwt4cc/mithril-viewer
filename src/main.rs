@@ -6,6 +6,7 @@ mod i18n;
 mod info;
 mod loader;
 mod menu;
+mod modal;
 
 use std::{
     borrow::Cow,
@@ -16,12 +17,12 @@ use std::{
 };
 
 use fontdue::{Font, FontSettings};
-use image::{ImageFormat, RgbaImage, imageops};
+use image::{DynamicImage, ImageFormat, RgbaImage, imageops};
 use winit::{
     application::ApplicationHandler,
     dpi::LogicalSize,
     event::{MouseButton, MouseScrollDelta, WindowEvent},
-    event_loop::{ActiveEventLoop, ControlFlow, EventLoop},
+    event_loop::{ActiveEventLoop, ControlFlow, EventLoop, EventLoopProxy},
     keyboard::{KeyCode, PhysicalKey},
     window::{CursorIcon, ResizeDirection, Window, WindowId},
 };
@@ -33,6 +34,7 @@ use gpu::Gpu;
 use i18n::tr;
 use info::Info;
 use menu::{Action, Menu};
+use modal::{BarAction, CropBar, Dialog, DialogAction};
 
 const BG: Rgb = [0x2b, 0x2d, 0x31];
 const SURF_TOP: Rgb = [0x3b, 0x3e, 0x44];
@@ -47,27 +49,23 @@ const DIM: Rgb = [0xa3, 0xa8, 0xb1];
 const ACCENT: Rgb = [0x8a, 0xa8, 0xff];
 const DANGER: Rgb = [0xd9, 0x4f, 0x4f];
 
-// Скругления
 const R_PILL: f32 = 9.0;
 const R_PANEL: f32 = 10.0;
 const R_MENU: f32 = 9.0;
 const R_ITEM: f32 = 6.0;
 const R_BTN: f32 = 6.0;
 
-// Тени
-const SHADOW_PAD: f32 = 10.0; // запас вокруг элемента в текстуре под тень
+const SHADOW_PAD: f32 = 10.0;
 const SHADOW_BLUR: f32 = 8.0;
 
-// Плавающие элементы поверх фото
 const MARGIN: f32 = 12.0;
 const PILL_H: f32 = 40.0;
-const TOP_H: f32 = 76.0; // полоса сверху: за неё таскаем окно
+const TOP_H: f32 = 76.0;
 const BTN_S: f32 = 30.0;
 const BTN_GAP: f32 = 6.0;
 const CAP_PAD: f32 = 5.0;
 
-// Панель свойств
-const SIDEBAR_W: f32 = 332.0; // место под панель (панель плавает внутри него)
+const SIDEBAR_W: f32 = 332.0;
 const PANEL_L: f32 = 16.0;
 const PANEL_R: f32 = 16.0;
 const PANEL_B: f32 = 16.0;
@@ -77,7 +75,6 @@ const ROW_H: f32 = 50.0;
 const CARD_ROWS: [usize; 4] = [1, 1, 3, 2];
 const EDGE: f32 = 5.0;
 
-/// Плавающая поверхность: тень, светлая кромка сверху и лёгкий градиент заливки.
 fn surface(cv: &mut Canvas, x: f32, y: f32, w: f32, h: f32, r: f32, s: f32) {
     cv.shadow(x, y + 2.0 * s, w, h, r, SHADOW_BLUR * s, 0.22);
     cv.round_rect_grad(x, y, w, h, r, EDGE_TOP, EDGE_BOT);
@@ -92,7 +89,6 @@ fn surface(cv: &mut Canvas, x: f32, y: f32, w: f32, h: f32, r: f32, s: f32) {
     );
 }
 
-/// Фон окна: радиальный градиент с виньеткой (маленькая текстура, растягивается на всё окно).
 fn bg_texture() -> Vec<u32> {
     const N: usize = 64;
     let (center, edge): (Rgb, Rgb) = ([0x37, 0x3a, 0x40], [0x2a, 0x2c, 0x30]);
@@ -139,6 +135,37 @@ struct Toast {
     until: Instant,
     appear: Fade,
     dirty: bool,
+}
+
+enum UserEvent {
+    Printed(Result<(), String>),
+}
+
+#[derive(Clone, Copy, PartialEq)]
+enum Handle {
+    Move,
+    N,
+    S,
+    W,
+    E,
+    NW,
+    NE,
+    SW,
+    SE,
+}
+
+#[derive(Clone, Copy)]
+struct Drag {
+    handle: Handle,
+    start: (f64, f64),
+    rect: [f32; 4],
+}
+
+struct Crop {
+    rect: [f32; 4],
+    drag: Option<Drag>,
+    bar: CropBar,
+    bar_dirty: bool,
 }
 
 #[derive(Clone, Copy)]
@@ -258,18 +285,15 @@ impl Layout {
         (SHADOW_PAD * self.scale).round() as i32
     }
 
-    /// Верх текстуры сайдбара: на отступ под тень выше самой панели.
     fn side_oy(&self) -> i32 {
         self.top_h - self.pad()
     }
 
-    /// Фото занимает всё окно (кроме места под панель): шапки-«таблетки» плавают поверх него.
     fn viewport(&self) -> (i32, i32, u32, u32) {
         let w = (self.win.0 as i32 - self.sidebar_w).max(1);
         (0, 0, w as u32, self.win.1.max(1))
     }
 
-    /// Правая капсула с кнопками: (x, y, w, h).
     fn capsule(&self) -> (f32, f32, f32, f32) {
         let s = self.scale;
         let w = (BTN_S * 3.0 + BTN_GAP * 2.0 + CAP_PAD * 2.0) * s;
@@ -302,7 +326,6 @@ impl Layout {
         self.btn_center(2)
     }
 
-    /// Максимальная ширина левой «таблетки» с именем файла.
     fn title_max_w(&self) -> f32 {
         let (cx, ..) = self.capsule();
         (cx - 2.0 * MARGIN * self.scale).max(0.0)
@@ -316,7 +339,6 @@ impl Layout {
         self.sidebar_full as f32 - (PANEL_L + PANEL_R) * self.scale
     }
 
-    /// Панель по высоте повторяет содержимое, но не вылезает за окно.
     fn panel_h(&self) -> f32 {
         let rows = CARD_ROWS.iter().sum::<usize>() as f32;
         let groups = (CARD_ROWS.len() - 1) as f32;
@@ -360,6 +382,102 @@ impl Layout {
         } else {
             None
         }
+    }
+}
+
+const MIN_CROP: f32 = 8.0;
+
+fn drag_rect(h: Handle, r: [f32; 4], dx: f32, dy: f32, iw: f32, ih: f32) -> [f32; 4] {
+    if h == Handle::Move {
+        let dx = dx.max(-r[0]).min(iw - r[2]);
+        let dy = dy.max(-r[1]).min(ih - r[3]);
+        return [r[0] + dx, r[1] + dy, r[2] + dx, r[3] + dy];
+    }
+    let (mw, mh) = (MIN_CROP.min(iw), MIN_CROP.min(ih));
+    let mut n = r;
+    if matches!(h, Handle::W | Handle::NW | Handle::SW) {
+        n[0] = (r[0] + dx).min(r[2] - mw).max(0.0);
+    }
+    if matches!(h, Handle::E | Handle::NE | Handle::SE) {
+        n[2] = (r[2] + dx).max(r[0] + mw).min(iw);
+    }
+    if matches!(h, Handle::N | Handle::NW | Handle::NE) {
+        n[1] = (r[1] + dy).min(r[3] - mh).max(0.0);
+    }
+    if matches!(h, Handle::S | Handle::SW | Handle::SE) {
+        n[3] = (r[3] + dy).max(r[1] + mh).min(ih);
+    }
+    n
+}
+
+fn handle_icon(h: Handle) -> CursorIcon {
+    match h {
+        Handle::Move => CursorIcon::Move,
+        Handle::N | Handle::S => CursorIcon::NsResize,
+        Handle::W | Handle::E => CursorIcon::EwResize,
+        Handle::NW | Handle::SE => CursorIcon::NwseResize,
+        Handle::NE | Handle::SW => CursorIcon::NeswResize,
+    }
+}
+
+fn quad(gpu: &Gpu, slot: usize, x0: f32, y0: f32, x1: f32, y1: f32, a: f32) {
+    let (x0, y0, x1, y1) = (x0.round(), y0.round(), x1.round(), y1.round());
+    if x1 > x0 && y1 > y0 {
+        gpu.draw_overlay_scaled(slot, (x0, y0, x1 - x0, y1 - y0), a);
+    }
+}
+
+fn draw_crop(gpu: &Gpu, s: f32, c: [f32; 4], im: [f32; 4], vp: (i32, i32, u32, u32)) {
+    let (vx, vy, vw, vh) = vp;
+    let (ix0, iy0) = (im[0].max(vx as f32), im[1].max(vy as f32));
+    let (ix1, iy1) = (
+        im[2].min((vx + vw as i32) as f32),
+        im[3].min((vy + vh as i32) as f32),
+    );
+    let (cx0, cy0) = (c[0].max(ix0).min(ix1), c[1].max(iy0).min(iy1));
+    let (cx1, cy1) = (c[2].max(ix0).min(ix1), c[3].max(iy0).min(iy1));
+    let dim = 0.55;
+    quad(gpu, gpu::BLACK, ix0, iy0, ix1, cy0, dim);
+    quad(gpu, gpu::BLACK, ix0, cy1, ix1, iy1, dim);
+    quad(gpu, gpu::BLACK, ix0, cy0, cx0, cy1, dim);
+    quad(gpu, gpu::BLACK, cx1, cy0, ix1, cy1, dim);
+
+    for i in 1..3 {
+        let f = i as f32 / 3.0;
+        let x = c[0] + (c[2] - c[0]) * f;
+        let y = c[1] + (c[3] - c[1]) * f;
+        quad(gpu, gpu::WHITE, x, c[1], x + 1.0, c[3], 0.3);
+        quad(gpu, gpu::WHITE, c[0], y, c[2], y + 1.0, 0.3);
+    }
+
+    let t = (1.5 * s).max(1.0);
+    quad(gpu, gpu::WHITE, c[0], c[1], c[2], c[1] + t, 1.0);
+    quad(gpu, gpu::WHITE, c[0], c[3] - t, c[2], c[3], 1.0);
+    quad(gpu, gpu::WHITE, c[0], c[1], c[0] + t, c[3], 1.0);
+    quad(gpu, gpu::WHITE, c[2] - t, c[1], c[2], c[3], 1.0);
+
+    let (mx, my) = ((c[0] + c[2]) / 2.0, (c[1] + c[3]) / 2.0);
+    let hs = 4.5 * s;
+    for (px, py) in [
+        (c[0], c[1]),
+        (mx, c[1]),
+        (c[2], c[1]),
+        (c[0], my),
+        (c[2], my),
+        (c[0], c[3]),
+        (mx, c[3]),
+        (c[2], c[3]),
+    ] {
+        quad(
+            gpu,
+            gpu::BLACK,
+            px - hs - 1.0,
+            py - hs - 1.0,
+            px + hs + 1.0,
+            py + hs + 1.0,
+            0.45,
+        );
+        quad(gpu, gpu::WHITE, px - hs, py - hs, px + hs, py + hs, 1.0);
     }
 }
 
@@ -436,6 +554,11 @@ struct App {
     menu: Option<Menu>,
     settings_open: bool,
     toast: Option<Toast>,
+    crop: Option<Crop>,
+    dialog: Option<Dialog>,
+    dialog_dirty: bool,
+    modified: bool,
+    proxy: EventLoopProxy<UserEvent>,
     clipboard: Option<arboard::Clipboard>,
     pending_delete: Option<Instant>,
     exit_requested: bool,
@@ -447,7 +570,7 @@ struct App {
 }
 
 impl App {
-    fn new(font: Font, config: Config) -> Self {
+    fn new(font: Font, config: Config, proxy: EventLoopProxy<UserEvent>) -> Self {
         Self {
             font,
             config,
@@ -472,6 +595,11 @@ impl App {
             menu: None,
             settings_open: false,
             toast: None,
+            crop: None,
+            dialog: None,
+            dialog_dirty: false,
+            modified: false,
+            proxy,
             clipboard: None,
             pending_delete: None,
             exit_requested: false,
@@ -600,6 +728,8 @@ impl App {
             }
             Action::RotateLeft => self.rotate(false),
             Action::RotateRight => self.rotate(true),
+            Action::Crop => self.start_crop(),
+            Action::Print => self.print(),
             Action::Copy => self.copy_image(),
             Action::Delete => self.request_delete(),
             Action::SetLanguage(code) => self.set_language(code),
@@ -612,6 +742,9 @@ impl App {
     }
 
     fn rotate(&mut self, clockwise: bool) {
+        if self.crop.is_some() || self.dialog.is_some() {
+            return;
+        }
         let Some(img) = self.image.take() else { return };
         let rotated = if clockwise {
             imageops::rotate90(&img)
@@ -620,8 +753,11 @@ impl App {
         };
         if let Some(anim) = &mut self.anim {
             anim.rotate(clockwise);
-        } else if let Some(gpu) = &mut self.gpu {
-            gpu.set_image(&rotated);
+        } else {
+            if let Some(gpu) = &mut self.gpu {
+                gpu.set_image(&rotated);
+            }
+            self.modified = true;
         }
         self.image = Some(rotated);
         self.view.reset();
@@ -728,7 +864,11 @@ impl App {
         };
         let Some(lay) = self.layout() else { return };
 
-        let hover = lay.hit(self.cursor);
+        let hover = if self.dialog.is_some() {
+            None
+        } else {
+            lay.hit(self.cursor)
+        };
         if hover != self.hover {
             self.hover = hover;
             for (i, f) in self.fades.iter_mut().enumerate() {
@@ -741,23 +881,329 @@ impl App {
             window.request_redraw();
         }
 
-        let icon = if window.is_maximized() {
+        let mut icon = if window.is_maximized() || self.dialog.is_some() {
             CursorIcon::Default
         } else {
             edge_dir(self.cursor, lay.win, (EDGE * lay.scale) as f64)
                 .map(dir_icon)
                 .unwrap_or(CursorIcon::Default)
         };
+        if icon == CursorIcon::Default && self.dialog.is_none() {
+            let dragging = self.crop.as_ref().and_then(|c| c.drag.map(|d| d.handle));
+            let h = dragging.or_else(|| self.crop_hit(&lay, self.cursor));
+            if let Some(h) = h {
+                icon = handle_icon(h);
+            }
+        }
         if icon != self.cursor_icon {
             self.cursor_icon = icon;
             window.set_cursor(icon);
         }
     }
 
+    fn crop_screen(&self, lay: &Layout, rect: [f32; 4]) -> Option<([f32; 4], [f32; 4])> {
+        let (iw, ih) = self.image.as_ref()?.dimensions();
+        let k = self.view.cur_scale;
+        let (vx, vy, vw, vh) = lay.viewport();
+        let cx = vx as f32 + vw as f32 / 2.0 + self.view.cur_pan.0;
+        let cy = vy as f32 + vh as f32 / 2.0 + self.view.cur_pan.1;
+        let (half_w, half_h) = (iw as f32 / 2.0, ih as f32 / 2.0);
+        let m = |x: f32, y: f32| (cx + (x - half_w) * k, cy + (y - half_h) * k);
+        let (a, b) = (m(rect[0], rect[1]), m(rect[2], rect[3]));
+        let (i0, i1) = (m(0.0, 0.0), m(iw as f32, ih as f32));
+        Some(([a.0, a.1, b.0, b.1], [i0.0, i0.1, i1.0, i1.1]))
+    }
+
+    fn crop_hit(&self, lay: &Layout, p: (f64, f64)) -> Option<Handle> {
+        let c = self.crop.as_ref()?;
+        let ([x0, y0, x1, y1], _) = self.crop_screen(lay, c.rect)?;
+        let t = (10.0 * lay.scale) as f64;
+        let (x0, y0, x1, y1) = (x0 as f64, y0 as f64, x1 as f64, y1 as f64);
+        let near = |a: f64, b: f64| (a - b).abs() <= t;
+        let in_x = p.0 >= x0 - t && p.0 <= x1 + t;
+        let in_y = p.1 >= y0 - t && p.1 <= y1 + t;
+        let (l, r) = (near(p.0, x0) && in_y, near(p.0, x1) && in_y);
+        let (tp, b) = (near(p.1, y0) && in_x, near(p.1, y1) && in_x);
+        match (l, r, tp, b) {
+            (true, _, true, _) => Some(Handle::NW),
+            (_, true, true, _) => Some(Handle::NE),
+            (true, _, _, true) => Some(Handle::SW),
+            (_, true, _, true) => Some(Handle::SE),
+            (true, ..) => Some(Handle::W),
+            (_, true, ..) => Some(Handle::E),
+            (_, _, true, _) => Some(Handle::N),
+            (_, _, _, true) => Some(Handle::S),
+            _ if p.0 > x0 && p.0 < x1 && p.1 > y0 && p.1 < y1 => Some(Handle::Move),
+            _ => None,
+        }
+    }
+
+    fn start_crop(&mut self) {
+        if self.crop.is_some() || self.dialog.is_some() {
+            return;
+        }
+        if self.anim.is_some() {
+            self.show_toast(tr("toast.crop_gif").to_string());
+            return;
+        }
+        let Some((iw, ih)) = self.image.as_ref().map(|i| i.dimensions()) else {
+            return;
+        };
+        let Some(lay) = self.layout() else { return };
+        self.close_menu();
+        self.view.reset();
+        let (mx, my) = (iw as f32 * 0.08, ih as f32 * 0.08);
+        self.crop = Some(Crop {
+            rect: [mx, my, iw as f32 - mx, ih as f32 - my],
+            drag: None,
+            bar: CropBar::new(&self.font, lay.scale),
+            bar_dirty: true,
+        });
+        self.redraw();
+    }
+
+    fn cancel_crop(&mut self) {
+        if self.crop.take().is_some() {
+            self.redraw();
+        }
+    }
+
+    fn apply_crop(&mut self) {
+        let Some(c) = self.crop.take() else { return };
+        let Some(img) = self.image.as_ref() else {
+            return;
+        };
+        let (iw, ih) = img.dimensions();
+        let x = (c.rect[0].round().max(0.0) as u32).min(iw.saturating_sub(1));
+        let y = (c.rect[1].round().max(0.0) as u32).min(ih.saturating_sub(1));
+        let w = ((c.rect[2] - c.rect[0]).round().max(1.0) as u32).min(iw - x);
+        let h = ((c.rect[3] - c.rect[1]).round().max(1.0) as u32).min(ih - y);
+        if (x, y, w, h) == (0, 0, iw, ih) {
+            self.redraw();
+            return;
+        }
+        let cropped = imageops::crop_imm(img, x, y, w, h).to_image();
+        if let Some(gpu) = &mut self.gpu {
+            gpu.set_image(&cropped);
+        }
+        if let Some(src) = &mut self.src {
+            src.dims = cropped.dimensions();
+        }
+        self.image = Some(cropped);
+        self.refresh_info();
+        self.sidebar_dirty = true;
+        self.view.reset();
+        self.modified = true;
+        self.redraw();
+    }
+
+    fn crop_press(&mut self, lay: &Layout) -> bool {
+        let Some(handle) = self.crop_hit(lay, self.cursor) else {
+            return false;
+        };
+        let cursor = self.cursor;
+        if let Some(c) = &mut self.crop {
+            c.drag = Some(Drag {
+                handle,
+                start: cursor,
+                rect: c.rect,
+            });
+        }
+        true
+    }
+
+    fn update_crop_drag(&mut self) {
+        let Some((iw, ih)) = self.image.as_ref().map(|i| i.dimensions()) else {
+            return;
+        };
+        let k = self.view.cur_scale.max(1e-6);
+        let cursor = self.cursor;
+        let Some(c) = &mut self.crop else { return };
+        let Some(d) = c.drag else { return };
+        let dx = (cursor.0 - d.start.0) as f32 / k;
+        let dy = (cursor.1 - d.start.1) as f32 / k;
+        c.rect = drag_rect(d.handle, d.rect, dx, dy, iw as f32, ih as f32);
+        self.redraw();
+    }
+
+    fn open_dialog(&mut self) {
+        let Some(lay) = self.layout() else { return };
+        self.close_menu();
+        self.dialog = Some(Dialog::unsaved(&self.font, lay.scale));
+        self.dialog_dirty = true;
+        self.update_modal_hover();
+        self.redraw();
+    }
+
+    fn close_dialog(&mut self) {
+        if self.dialog.take().is_some() {
+            self.redraw();
+        }
+    }
+
+    fn request_exit(&mut self, el: &ActiveEventLoop) {
+        self.crop = None;
+        if !self.modified {
+            el.exit();
+        } else if self.dialog.is_none() {
+            self.open_dialog();
+        }
+    }
+
+    fn dialog_action(&mut self, a: DialogAction, el: &ActiveEventLoop) {
+        match a {
+            DialogAction::Cancel => self.close_dialog(),
+            DialogAction::Discard => el.exit(),
+            DialogAction::Save => match self.save_copy() {
+                Ok(_) => el.exit(),
+                Err(e) => {
+                    self.close_dialog();
+                    self.show_toast(format!("{}: {e}", tr("toast.save_failed")));
+                }
+            },
+        }
+    }
+
+    fn dialog_local(&self, lay: &Layout) -> Option<(f32, f32)> {
+        let d = self.dialog.as_ref()?;
+        let o = d.origin(lay.win);
+        Some((
+            self.cursor.0 as f32 - o.0 as f32,
+            self.cursor.1 as f32 - o.1 as f32,
+        ))
+    }
+
+    fn bar_local(&self, lay: &Layout) -> Option<(f32, f32)> {
+        let c = self.crop.as_ref()?;
+        let o = c.bar.origin(lay.viewport());
+        Some((
+            self.cursor.0 as f32 - o.0 as f32,
+            self.cursor.1 as f32 - o.1 as f32,
+        ))
+    }
+
+    fn update_modal_hover(&mut self) {
+        let Some(lay) = self.layout() else { return };
+        if let Some(p) = self.dialog_local(&lay) {
+            let changed = self.dialog.as_mut().is_some_and(|d| d.set_hover(p));
+            if changed {
+                self.dialog_dirty = true;
+                self.redraw();
+            }
+        }
+        if let Some(p) = self.bar_local(&lay) {
+            let changed = self.crop.as_mut().is_some_and(|c| c.bar.set_hover(p));
+            if changed {
+                if let Some(c) = &mut self.crop {
+                    c.bar_dirty = true;
+                }
+                self.redraw();
+            }
+        }
+    }
+
+    fn save_copy(&self) -> Result<PathBuf, String> {
+        use std::io::Write;
+
+        let img = self.image.as_ref().ok_or("no image")?;
+        let path = self.path.as_ref().ok_or("no path")?;
+        let orig_ext = path
+            .extension()
+            .map(|e| e.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        let (fmt, ext) = match self.src.and_then(|s| s.format) {
+            Some(
+                f @ (ImageFormat::Png
+                | ImageFormat::Jpeg
+                | ImageFormat::Gif
+                | ImageFormat::WebP
+                | ImageFormat::Bmp),
+            ) if !orig_ext.is_empty() => (f, orig_ext),
+            _ => (ImageFormat::Png, "png".to_string()),
+        };
+
+        let dir = match path.parent() {
+            Some(d) if !d.as_os_str().is_empty() => d.to_path_buf(),
+            _ => PathBuf::from("."),
+        };
+        let stem = path
+            .file_stem()
+            .map(|s| s.to_string_lossy().into_owned())
+            .unwrap_or_else(|| "image".into());
+        let suffix = tr("save.suffix");
+        let mut out = dir.join(format!("{stem} ({suffix}).{ext}"));
+        let mut n = 2;
+        while out.exists() {
+            out = dir.join(format!("{stem} ({suffix} {n}).{ext}"));
+            n += 1;
+        }
+
+        let file = std::fs::File::create(&out).map_err(|e| e.to_string())?;
+        let mut w = std::io::BufWriter::new(file);
+        let result = if fmt == ImageFormat::Jpeg {
+            let rgb = DynamicImage::ImageRgba8(img.clone()).into_rgb8();
+            let enc = image::codecs::jpeg::JpegEncoder::new_with_quality(&mut w, 92);
+            DynamicImage::ImageRgb8(rgb).write_with_encoder(enc)
+        } else {
+            DynamicImage::ImageRgba8(img.clone()).write_to(&mut w, fmt)
+        };
+        result.map_err(|e| e.to_string())?;
+        w.flush().map_err(|e| e.to_string())?;
+        Ok(out)
+    }
+
+    fn print(&mut self) {
+        let Some(img) = self
+            .anim
+            .as_ref()
+            .map(|a| a.current())
+            .or(self.image.as_ref())
+        else {
+            return;
+        };
+        let img = img.clone();
+        let proxy = self.proxy.clone();
+        std::thread::spawn(move || {
+            let res = (|| -> Result<(), String> {
+                use std::io::Write;
+                let stamp = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_nanos())
+                    .unwrap_or(0);
+                let path = std::env::temp_dir().join(format!("mithril-print-{stamp}.png"));
+                {
+                    let file = std::fs::File::create(&path).map_err(|e| e.to_string())?;
+                    let mut w = std::io::BufWriter::new(file);
+                    let enc = image::codecs::png::PngEncoder::new_with_quality(
+                        &mut w,
+                        image::codecs::png::CompressionType::Fast,
+                        image::codecs::png::FilterType::NoFilter,
+                    );
+                    DynamicImage::ImageRgba8(img)
+                        .write_with_encoder(enc)
+                        .map_err(|e| e.to_string())?;
+                    w.flush().map_err(|e| e.to_string())?;
+                }
+                let out = std::process::Command::new("lp")
+                    .arg("-o")
+                    .arg("fit-to-page")
+                    .arg(&path)
+                    .output();
+                let _ = std::fs::remove_file(&path);
+                let out = out.map_err(|e| e.to_string())?;
+                if out.status.success() {
+                    Ok(())
+                } else {
+                    Err(String::from_utf8_lossy(&out.stderr).trim().to_string())
+                }
+            })();
+            let _ = proxy.send_event(UserEvent::Printed(res));
+        });
+    }
+
     fn draw_header(&self, cv: &mut Canvas, lay: &Layout) {
         let s = lay.scale;
 
-        // Левая плашка: только имя файла с маленьким значком.
         if let Some(info) = &self.info {
             let px = 14.0 * s;
             let (pad, icon_w, gap) = (14.0 * s, 16.0 * s, 9.0 * s);
@@ -811,7 +1257,6 @@ impl App {
             }
         }
 
-        // Правая капсула: свойства, настройки | закрыть.
         let (x, y, w, h) = lay.capsule();
         surface(cv, x, y, w, h, R_PILL * s, s);
 
@@ -1081,6 +1526,64 @@ impl App {
             }
         }
 
+        let crop_scr = match &self.crop {
+            Some(c) => self.crop_screen(&lay, c.rect),
+            None => None,
+        };
+        if let Some(c) = &mut self.crop {
+            let label = format!(
+                "{} × {}",
+                (c.rect[2] - c.rect[0]).round() as u32,
+                (c.rect[3] - c.rect[1]).round() as u32
+            );
+            if c.bar.label != label {
+                c.bar.label = label;
+                c.bar_dirty = true;
+            }
+        }
+
+        let mut bar_buf = None;
+        if let Some(c) = &mut self.crop {
+            if c.bar_dirty {
+                c.bar_dirty = false;
+                let pad = c.bar.pad();
+                let (bw, bh) = ((c.bar.w + 2 * pad) as u32, (c.bar.h + 2 * pad) as u32);
+                let mut bb = vec![0u32; (bw * bh) as usize];
+                c.bar.draw(
+                    &mut Canvas {
+                        px: &mut bb,
+                        w: bw,
+                        h: bh,
+                        ox: -pad,
+                        oy: -pad,
+                    },
+                    &self.font,
+                );
+                bar_buf = Some((bb, bw, bh));
+            }
+        }
+
+        let mut dialog_buf = None;
+        if self.dialog_dirty {
+            self.dialog_dirty = false;
+            if let Some(d) = &self.dialog {
+                let pad = d.pad();
+                let (dw, dh) = ((d.w + 2 * pad) as u32, (d.h + 2 * pad) as u32);
+                let mut db = vec![0u32; (dw * dh) as usize];
+                d.draw(
+                    &mut Canvas {
+                        px: &mut db,
+                        w: dw,
+                        h: dh,
+                        ox: -pad,
+                        oy: -pad,
+                    },
+                    &self.font,
+                );
+                dialog_buf = Some((db, dw, dh));
+            }
+        }
+
         let Some(gpu) = self.gpu.as_mut() else { return };
         if let Some(anim) = &mut self.anim {
             if let Some(frame) = anim.take_dirty() {
@@ -1098,6 +1601,12 @@ impl App {
         }
         if let Some((tb, bw, bh)) = &toast_buf {
             gpu.set_overlay(gpu::TOAST, tb, *bw, *bh);
+        }
+        if let Some((bb, bw, bh)) = &bar_buf {
+            gpu.set_overlay(gpu::BAR, bb, *bw, *bh);
+        }
+        if let Some((db, dw, dh)) = &dialog_buf {
+            gpu.set_overlay(gpu::DIALOG, db, *dw, *dh);
         }
 
         gpu.begin(w, h, BG);
@@ -1123,11 +1632,19 @@ impl App {
                 self.angle.v,
             );
         }
+        if let Some((c, im)) = crop_scr {
+            draw_crop(gpu, lay.scale, c, im, (vx, vy, vw, vh));
+        }
 
         if lay.sidebar_w > 0 {
             gpu.draw_overlay(gpu::SIDEBAR, w as i32 - lay.sidebar_w, lay.side_oy(), 1.0);
         }
         gpu.draw_overlay(gpu::HEADER, 0, 0, 1.0);
+        if let Some(c) = &self.crop {
+            let (bx, by) = c.bar.origin((vx, vy, vw, vh));
+            let pad = c.bar.pad();
+            gpu.draw_overlay(gpu::BAR, bx - pad, by - pad, 1.0);
+        }
         if let Some(menu) = &self.menu {
             let lift = ((1.0 - menu.appear.v) * 6.0 * lay.scale) as i32;
             let mp = menu.pad();
@@ -1136,11 +1653,22 @@ impl App {
         if let Some(t) = &self.toast {
             if let Some((bw, bh)) = gpu.overlay_size(gpu::TOAST) {
                 let x = vx + (vw as i32 - bw) / 2;
-                let y = vy + vh as i32 - bh - (28.0 * lay.scale) as i32
+                let lift = if self.crop.is_some() {
+                    (56.0 * lay.scale) as i32
+                } else {
+                    0
+                };
+                let y = vy + vh as i32 - bh - (28.0 * lay.scale) as i32 - lift
                     + lay.pad()
                     + ((1.0 - t.appear.v) * 8.0 * lay.scale) as i32;
                 gpu.draw_overlay(gpu::TOAST, x, y, t.appear.v);
             }
+        }
+        if let Some(d) = &self.dialog {
+            gpu.draw_overlay_scaled(gpu::BLACK, (0.0, 0.0, w as f32, h as f32), 0.5);
+            let (dx, dy) = d.origin(lay.win);
+            let pad = d.pad();
+            gpu.draw_overlay(gpu::DIALOG, dx - pad, dy - pad, 1.0);
         }
         gpu.present();
 
@@ -1150,7 +1678,7 @@ impl App {
     }
 }
 
-impl ApplicationHandler for App {
+impl ApplicationHandler<UserEvent> for App {
     fn resumed(&mut self, el: &ActiveEventLoop) {
         if self.gpu.is_some() {
             return;
@@ -1171,6 +1699,8 @@ impl ApplicationHandler for App {
         match Gpu::new(el, attrs) {
             Ok((window, mut gpu)) => {
                 gpu.set_overlay(gpu::BG, &bg_texture(), 64, 64);
+                gpu.set_overlay(gpu::BLACK, &[0xff00_0000], 1, 1);
+                gpu.set_overlay(gpu::WHITE, &[0xffff_ffff], 1, 1);
                 if let Some(img) = &self.image {
                     gpu.set_image(img);
                 }
@@ -1181,6 +1711,21 @@ impl ApplicationHandler for App {
             Err(e) => {
                 eprintln!("mithril: не удалось запустить OpenGL: {e}");
                 el.exit();
+            }
+        }
+    }
+
+    fn user_event(&mut self, _el: &ActiveEventLoop, event: UserEvent) {
+        match event {
+            UserEvent::Printed(Ok(())) => self.show_toast(tr("toast.print_sent").to_string()),
+            UserEvent::Printed(Err(e)) => {
+                let short: String = e.lines().next().unwrap_or("").chars().take(60).collect();
+                let msg = if short.is_empty() {
+                    tr("toast.print_failed").to_string()
+                } else {
+                    format!("{}: {short}", tr("toast.print_failed"))
+                };
+                self.show_toast(msg);
             }
         }
     }
@@ -1209,7 +1754,7 @@ impl ApplicationHandler for App {
 
     fn window_event(&mut self, el: &ActiveEventLoop, _: WindowId, event: WindowEvent) {
         match event {
-            WindowEvent::CloseRequested => el.exit(),
+            WindowEvent::CloseRequested => self.request_exit(el),
             WindowEvent::ModifiersChanged(m) => {
                 self.shift = m.state().shift_key();
                 self.ctrl = m.state().control_key();
@@ -1217,12 +1762,29 @@ impl ApplicationHandler for App {
             WindowEvent::KeyboardInput { event, .. }
                 if event.state.is_pressed() && !event.repeat =>
             {
+                if self.dialog.is_some() {
+                    match event.physical_key {
+                        PhysicalKey::Code(KeyCode::Escape) => self.close_dialog(),
+                        PhysicalKey::Code(KeyCode::Enter | KeyCode::NumpadEnter) => {
+                            self.dialog_action(DialogAction::Save, el)
+                        }
+                        _ => {}
+                    }
+                    return;
+                }
                 match event.physical_key {
                     PhysicalKey::Code(KeyCode::Escape) => {
-                        if self.menu.is_some() {
+                        if self.crop.is_some() {
+                            self.cancel_crop();
+                        } else if self.menu.is_some() {
                             self.close_menu();
                         } else {
-                            el.exit();
+                            self.request_exit(el);
+                        }
+                    }
+                    PhysicalKey::Code(KeyCode::Enter | KeyCode::NumpadEnter) => {
+                        if self.crop.is_some() {
+                            self.apply_crop();
                         }
                     }
                     PhysicalKey::Code(KeyCode::Digit0) | PhysicalKey::Code(KeyCode::Numpad0) => {
@@ -1236,6 +1798,14 @@ impl ApplicationHandler for App {
                     PhysicalKey::Code(KeyCode::KeyC) if self.ctrl => {
                         self.close_menu();
                         self.copy_image();
+                    }
+                    PhysicalKey::Code(KeyCode::KeyC) => {
+                        self.close_menu();
+                        self.start_crop();
+                    }
+                    PhysicalKey::Code(KeyCode::KeyP) if self.ctrl => {
+                        self.close_menu();
+                        self.print();
                     }
                     PhysicalKey::Code(KeyCode::Delete) => {
                         self.close_menu();
@@ -1254,11 +1824,24 @@ impl ApplicationHandler for App {
                 self.redraw();
             }
             WindowEvent::ScaleFactorChanged { .. } => {
+                if let Some(lay) = self.layout() {
+                    if self.dialog.is_some() {
+                        self.dialog = Some(Dialog::unsaved(&self.font, lay.scale));
+                        self.dialog_dirty = true;
+                    }
+                    if let Some(c) = &mut self.crop {
+                        c.bar = CropBar::new(&self.font, lay.scale);
+                        c.bar_dirty = true;
+                    }
+                }
                 self.header_dirty = true;
                 self.sidebar_dirty = true;
                 self.redraw();
             }
             WindowEvent::MouseWheel { delta, .. } => {
+                if self.dialog.is_some() {
+                    return;
+                }
                 if self.menu.is_some() {
                     self.close_menu();
                     return;
@@ -1274,6 +1857,9 @@ impl ApplicationHandler for App {
                 button: MouseButton::Right,
                 ..
             } if state.is_pressed() => {
+                if self.dialog.is_some() || self.crop.is_some() {
+                    return;
+                }
                 let Some(lay) = self.layout() else { return };
                 let (vx, vy, vw, vh) = lay.viewport();
                 let (px, py) = self.cursor;
@@ -1294,6 +1880,19 @@ impl ApplicationHandler for App {
             } => {
                 if !state.is_pressed() {
                     self.dragging = false;
+                    if let Some(c) = &mut self.crop {
+                        c.drag = None;
+                    }
+                    return;
+                }
+                if self.dialog.is_some() {
+                    let action = self
+                        .layout()
+                        .and_then(|lay| self.dialog_local(&lay))
+                        .and_then(|p| self.dialog.as_ref().and_then(|d| d.action_at(p)));
+                    if let Some(a) = action {
+                        self.dialog_action(a, el);
+                    }
                     return;
                 }
                 if self.menu.is_some() {
@@ -1316,8 +1915,31 @@ impl ApplicationHandler for App {
                         return;
                     }
                 }
+                if let Some(p) = self.bar_local(&lay) {
+                    let action = self.crop.as_ref().and_then(|c| c.bar.action_at(p));
+                    match action {
+                        Some(BarAction::Cancel) => {
+                            self.cancel_crop();
+                            return;
+                        }
+                        Some(BarAction::Apply) => {
+                            self.apply_crop();
+                            return;
+                        }
+                        None => {}
+                    }
+                    let on_bar = self.crop.as_ref().is_some_and(|c| {
+                        p.0 >= 0.0 && p.1 >= 0.0 && p.0 < c.bar.w as f32 && p.1 < c.bar.h as f32
+                    });
+                    if on_bar {
+                        return;
+                    }
+                }
+                if self.crop.is_some() && lay.hit(self.cursor).is_none() && self.crop_press(&lay) {
+                    return;
+                }
                 match lay.hit(self.cursor) {
-                    Some(Hit::Close) => el.exit(),
+                    Some(Hit::Close) => self.request_exit(el),
                     Some(Hit::Info) => self.toggle_sidebar(),
                     Some(Hit::More) => self.open_settings(),
                     Some(Hit::OpenFolder) => self.open_folder(),
@@ -1342,6 +1964,8 @@ impl ApplicationHandler for App {
                     self.redraw();
                 }
                 self.cursor = new;
+                self.update_crop_drag();
+                self.update_modal_hover();
 
                 if let Some(menu) = &mut self.menu {
                     let item = menu.item_at(new);
@@ -1369,7 +1993,8 @@ fn main() {
     let config = config::load();
     i18n::init(config.language.as_deref());
 
-    let mut app = App::new(font, config);
+    let event_loop = EventLoop::<UserEvent>::with_user_event().build().unwrap();
+    let mut app = App::new(font, config, event_loop.create_proxy());
 
     if let Some(path) = std::env::args_os().nth(1).map(PathBuf::from) {
         match loader::load(&path) {
@@ -1389,6 +2014,5 @@ fn main() {
         }
     }
 
-    let event_loop = EventLoop::new().unwrap();
     event_loop.run_app(&mut app).unwrap();
 }

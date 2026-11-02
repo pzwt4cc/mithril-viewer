@@ -28,7 +28,11 @@ pub const SIDEBAR: usize = 1;
 pub const MENU: usize = 2;
 pub const TOAST: usize = 3;
 pub const BG: usize = 4;
-const OVERLAYS: usize = 5;
+pub const BLACK: usize = 5;
+pub const WHITE: usize = 6;
+pub const BAR: usize = 7;
+pub const DIALOG: usize = 8;
+const OVERLAYS: usize = 9;
 
 const VERT: &str = r#"#version 300 es
 uniform vec4 u_rect;
@@ -217,7 +221,6 @@ impl Gpu {
             );
             gl.clear(glow::COLOR_BUFFER_BIT);
             gl.enable(glow::BLEND);
-            // Альфа фреймбуфера всегда остаётся 1, иначе композитор просвечивает рабочий стол.
             gl.blend_func_separate(
                 glow::SRC_ALPHA,
                 glow::ONE_MINUS_SRC_ALPHA,

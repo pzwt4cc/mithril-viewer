@@ -19,6 +19,8 @@ pub enum Action {
     ResetZoom,
     RotateLeft,
     RotateRight,
+    Crop,
+    Print,
     Copy,
     Delete,
     SetLanguage(&'static str),
@@ -66,8 +68,11 @@ pub fn context_entries(mode: DeleteMode) -> Vec<Entry> {
         item(Action::ResetZoom, tr("menu.reset_zoom"), "0"),
         item(Action::RotateLeft, tr("menu.rotate_left"), "Shift+R"),
         item(Action::RotateRight, tr("menu.rotate_right"), "R"),
+        item(Action::Crop, tr("menu.crop"), "C"),
         Entry::Separator,
         item(Action::Copy, tr("menu.copy"), "Ctrl+C"),
+        item(Action::Print, tr("menu.print"), "Ctrl+P"),
+        Entry::Separator,
         item(Action::Delete, delete_label(mode), "Del"),
     ]
 }
@@ -154,7 +159,6 @@ impl Menu {
         }
     }
 
-    /// Отступ вокруг меню под тень (текстура больше видимого прямоугольника).
     pub fn pad(&self) -> i32 {
         (SHADOW_PAD * self.scale).round() as i32
     }

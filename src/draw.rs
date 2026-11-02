@@ -10,7 +10,6 @@ pub struct Canvas<'a> {
     pub oy: i32,
 }
 
-/// Пиксели хранятся как 0xAARRGGBB (straight alpha). Буфер, заполненный нулями, прозрачный.
 fn pack(c: Rgb) -> u32 {
     0xff00_0000 | (c[0] as u32) << 16 | (c[1] as u32) << 8 | c[2] as u32
 }
@@ -122,7 +121,6 @@ impl Canvas<'_> {
         self.round_rect_alpha(x, y, w, h, r, c, 1.0);
     }
 
-    /// Скруглённый прямоугольник с вертикальным градиентом.
     #[allow(clippy::too_many_arguments)]
     pub fn round_rect_grad(&mut self, x: f32, y: f32, w: f32, h: f32, r: f32, top: Rgb, bot: Rgb) {
         let (cx, cy) = (x + w / 2.0, y + h / 2.0);
@@ -141,7 +139,6 @@ impl Canvas<'_> {
         }
     }
 
-    /// Мягкая тень под скруглённым прямоугольником.
     #[allow(clippy::too_many_arguments)]
     pub fn shadow(&mut self, x: f32, y: f32, w: f32, h: f32, r: f32, blur: f32, alpha: f32) {
         let (cx, cy) = (x + w / 2.0, y + h / 2.0);
@@ -206,4 +203,26 @@ pub fn lerp(a: Rgb, b: Rgb, t: f32) -> Rgb {
     let t = t.clamp(0.0, 1.0);
     let m = |x: u8, y: u8| (x as f32 + (y as f32 - x as f32) * t).round() as u8;
     [m(a[0], b[0]), m(a[1], b[1]), m(a[2], b[2])]
+}
+
+pub fn wrap(font: &Font, s: &str, px: f32, max_w: f32) -> Vec<String> {
+    let mut lines = Vec::new();
+    let mut cur = String::new();
+    for word in s.split_whitespace() {
+        let cand = if cur.is_empty() {
+            word.to_owned()
+        } else {
+            format!("{cur} {word}")
+        };
+        if cur.is_empty() || text_width(font, &cand, px) <= max_w {
+            cur = cand;
+        } else {
+            lines.push(std::mem::take(&mut cur));
+            cur = word.to_owned();
+        }
+    }
+    if !cur.is_empty() {
+        lines.push(cur);
+    }
+    lines
 }
