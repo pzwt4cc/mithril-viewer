@@ -25,7 +25,7 @@ use winit::{
     event::{MouseButton, MouseScrollDelta, WindowEvent},
     event_loop::{ActiveEventLoop, ControlFlow, EventLoop, EventLoopProxy},
     keyboard::{KeyCode, PhysicalKey},
-    window::{CursorIcon, ResizeDirection, Window, WindowId},
+    window::{CursorIcon, Icon, ResizeDirection, Window, WindowId},
 };
 
 use anim::Anim;
@@ -37,6 +37,21 @@ use i18n::tr;
 use info::Info;
 use menu::{Action, Menu};
 use modal::{BarAction, CropBar, Dialog, DialogAction};
+
+/// Идентификатор приложения: Wayland app_id / X11 WM_CLASS.
+/// Должен совпадать с именем mithril-viewer.desktop и иконки в теме.
+const APP_ID: &str = "mithril-viewer";
+
+static ICON_PNG: &[u8] =
+    include_bytes!("../data/icons/hicolor/256x256/apps/mithril-viewer.png");
+
+fn window_icon() -> Option<Icon> {
+    let img = image::load_from_memory_with_format(ICON_PNG, ImageFormat::Png)
+        .ok()?
+        .into_rgba8();
+    let (w, h) = img.dimensions();
+    Icon::from_rgba(img.into_raw(), w, h).ok()
+}
 
 const SURF_TOP: Rgb = [0x3b, 0x3e, 0x44];
 const SURF_BOT: Rgb = [0x36, 0x39, 0x3f];
@@ -1873,7 +1888,14 @@ impl ApplicationHandler<UserEvent> for App {
             .with_decorations(false)
             .with_transparent(true)
             .with_inner_size(LogicalSize::new(1000.0, 720.0))
-            .with_min_inner_size(LogicalSize::new(420.0, 280.0));
+            .with_min_inner_size(LogicalSize::new(420.0, 280.0))
+            .with_window_icon(window_icon());
+        #[cfg(target_os = "linux")]
+        let attrs = {
+            use winit::platform::{wayland::WindowAttributesExtWayland, x11::WindowAttributesExtX11};
+            let attrs = WindowAttributesExtWayland::with_name(attrs, APP_ID, APP_ID);
+            WindowAttributesExtX11::with_name(attrs, APP_ID, APP_ID)
+        };
 
         match Gpu::new(el, attrs) {
             Ok((window, mut gpu)) => {

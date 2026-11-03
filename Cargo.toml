@@ -1,7 +1,10 @@
 [package]
-name = "Mithril"
+name = "mithril-viewer"
 version = "0.1.0"
 edition = "2024"
+description = "Fast, minimal GPU-accelerated image viewer"
+license = "MIT"
+readme = "README.md"
 
 [dependencies]
 arboard = { version = "3.7.0", features = ["wayland-data-control"] }

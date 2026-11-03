@@ -1,0 +1,15 @@
+[Desktop Entry]
+Type=Application
+Name=Mithril Viewer
+GenericName=Image Viewer
+GenericName[ru]=Просмотрщик изображений
+Comment=Fast, minimal image viewer
+Comment[ru]=Быстрый минималистичный просмотрщик изображений
+Exec=mithril-viewer %f
+Icon=mithril-viewer
+Terminal=false
+Categories=Graphics;Viewer;RasterGraphics;
+MimeType=image/png;image/jpeg;image/gif;image/webp;image/bmp;
+Keywords=image;picture;photo;viewer;gif;png;jpeg;webp;
+Keywords[ru]=изображение;картинка;фото;просмотр;
+StartupWMClass=mithril-viewer
