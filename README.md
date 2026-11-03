@@ -8,7 +8,7 @@
 Smooth zoom, animated GIF/WebP, quick crop and rotate, and a clean dark UI.
 
 ![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)
-![Rust](https://img.shields.io/badge/Rust-2024-orange.svg)
+![Rust](https://img.shields.io/badge/Rust-orange.svg)
 ![Platform](https://img.shields.io/badge/platform-Linux-lightgrey.svg)
 ![Wayland and X11](https://img.shields.io/badge/Wayland%20%7C%20X11-supported-success.svg)
 
@@ -73,24 +73,28 @@ Or just pick **Mithril Viewer** in "Open with", or drop an image onto the window
 
 ### Keyboard shortcuts
 
-| Key | Action |
-| --- | --- |
-| `←` / `→`, `PageUp` / `PageDown` | Previous / next image |
-| Mouse wheel | Zoom at the cursor |
-| `0` | Reset zoom |
-| `R` / `Shift+R` | Rotate clockwise / counter-clockwise |
-| `C` | Crop (`Enter` apply, `Esc` cancel) |
-| `Ctrl+C` | Copy image to clipboard |
-| `Ctrl+P` | Print |
-| `Delete` | Delete image |
-| `I` | Toggle the info panel |
-| `Esc` | Close menu / cancel crop / quit |
+| Key                              | Action                               |
+| -------------------------------- | ------------------------------------ |
+| `←` / `→`, `PageUp` / `PageDown` | Previous / next image                |
+| Mouse wheel                      | Zoom at the cursor                   |
+| `0`                              | Reset zoom                           |
+| `R` / `Shift+R`                  | Rotate clockwise / counter-clockwise |
+| `C`                              | Crop (`Enter` apply, `Esc` cancel)   |
+| `Ctrl+C`                         | Copy image to clipboard              |
+| `Ctrl+P`                         | Print                                |
+| `Delete`                         | Delete image                         |
+| `I`                              | Toggle the info panel                |
+| `Esc`                            | Close menu / cancel crop / quit      |
 
 Right-click the image for the context menu, and use the `⋯` button in the header for settings.
 
 ## Contributing
 
 Issues and pull requests are welcome.
+
+## Credits
+
+Designed and maintained by [pzwt4cc](https://github.com/pzwt4cc). Built with the help of AI (Claude by Anthropic).
 
 ## License
 
