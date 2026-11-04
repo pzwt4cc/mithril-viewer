@@ -42,8 +42,7 @@ use modal::{BarAction, CropBar, Dialog, DialogAction};
 /// Должен совпадать с именем mithril-viewer.desktop и иконки в теме.
 const APP_ID: &str = "mithril-viewer";
 
-static ICON_PNG: &[u8] =
-    include_bytes!("../data/icons/hicolor/256x256/apps/mithril-viewer.png");
+static ICON_PNG: &[u8] = include_bytes!("../data/icons/hicolor/256x256/apps/mithril-viewer.png");
 
 fn window_icon() -> Option<Icon> {
     let img = image::load_from_memory_with_format(ICON_PNG, ImageFormat::Png)
@@ -82,6 +81,11 @@ const TOP_H: f32 = 76.0;
 const BTN_S: f32 = 30.0;
 const BTN_GAP: f32 = 6.0;
 const CAP_PAD: f32 = 5.0;
+const LOGO_S: f32 = 120.0;
+const START_W: f32 = 340.0;
+const START_H: f32 = 264.0;
+const START_BTN_W: f32 = 240.0;
+const START_BTN_H: f32 = 46.0;
 
 const SIDEBAR_W: f32 = 332.0;
 const PANEL_L: f32 = 16.0;
@@ -157,6 +161,7 @@ struct Toast {
 
 enum UserEvent {
     Printed(Result<(), String>),
+    Picked(Option<PathBuf>),
 }
 
 enum After {
@@ -277,6 +282,8 @@ enum Hit {
     Close,
     OpenFolder,
     More,
+    Open,
+    Start,
 }
 
 impl Hit {
@@ -291,6 +298,7 @@ struct Layout {
     top_h: i32,
     sidebar_w: i32,
     sidebar_full: i32,
+    empty: bool,
 }
 
 impl Layout {
@@ -302,6 +310,7 @@ impl Layout {
             top_h: (TOP_H * scale).round() as i32,
             sidebar_w: (full as f32 * frac).round() as i32,
             sidebar_full: full,
+            empty: false,
         }
     }
 
@@ -320,7 +329,7 @@ impl Layout {
 
     fn capsule(&self) -> (f32, f32, f32, f32) {
         let s = self.scale;
-        let w = (BTN_S * 3.0 + BTN_GAP * 2.0 + CAP_PAD * 2.0) * s;
+        let w = (BTN_S * 4.0 + BTN_GAP * 3.0 + CAP_PAD * 2.0) * s;
         (
             self.win.0 as f32 - MARGIN * s - w,
             MARGIN * s,
@@ -338,16 +347,20 @@ impl Layout {
         )
     }
 
-    fn info_center(&self) -> (f32, f32) {
+    fn open_center(&self) -> (f32, f32) {
         self.btn_center(0)
     }
 
-    fn more_center(&self) -> (f32, f32) {
+    fn info_center(&self) -> (f32, f32) {
         self.btn_center(1)
     }
 
-    fn close_center(&self) -> (f32, f32) {
+    fn more_center(&self) -> (f32, f32) {
         self.btn_center(2)
+    }
+
+    fn close_center(&self) -> (f32, f32) {
+        self.btn_center(3)
     }
 
     fn title_max_w(&self) -> f32 {
@@ -391,16 +404,45 @@ impl Layout {
         )
     }
 
+    fn start_origin(&self) -> (f32, f32) {
+        let block_h = START_H * self.scale;
+        let cx = (self.win.0 as i32 - self.sidebar_w) as f32 / 2.0;
+        let top = self.top_h as f32;
+        let cy = top + (self.win.1 as f32 - top) / 2.0;
+        (cx, (cy - block_h / 2.0).max(top))
+    }
+
+    fn start_btn(&self) -> (f32, f32, f32, f32) {
+        let s = self.scale;
+        let (cx, y0) = self.start_origin();
+        (
+            cx - START_BTN_W * s / 2.0,
+            y0 + 186.0 * s,
+            START_BTN_W * s,
+            START_BTN_H * s,
+        )
+    }
+
     fn hit(&self, p: (f64, f64)) -> Option<Hit> {
         let half = (BTN_S / 2.0 * self.scale) as f64;
         let near =
             |c: (f32, f32)| (p.0 - c.0 as f64).abs() <= half && (p.1 - c.1 as f64).abs() <= half;
+        let inside = |r: (f32, f32, f32, f32)| {
+            p.0 >= r.0 as f64
+                && p.0 <= (r.0 + r.2) as f64
+                && p.1 >= r.1 as f64
+                && p.1 <= (r.1 + r.3) as f64
+        };
         if near(self.close_center()) {
             Some(Hit::Close)
         } else if near(self.more_center()) {
             Some(Hit::More)
         } else if near(self.info_center()) {
             Some(Hit::Info)
+        } else if near(self.open_center()) {
+            Some(Hit::Open)
+        } else if self.empty && inside(self.start_btn()) {
+            Some(Hit::Start)
         } else if self.sidebar_w == self.sidebar_full && near(self.folder_btn_center()) {
             Some(Hit::OpenFolder)
         } else {
@@ -410,6 +452,31 @@ impl Layout {
 }
 
 const MIN_CROP: f32 = 8.0;
+
+fn logo_pixels(size: u32) -> Vec<u32> {
+    let Ok(img) = image::load_from_memory_with_format(ICON_PNG, ImageFormat::Png) else {
+        return Vec::new();
+    };
+    let mut rgba = img.into_rgba8();
+    for p in rgba.pixels_mut() {
+        let a = p[3] as u32;
+        for c in 0..3 {
+            p[c] = ((p[c] as u32 * a + 127) / 255) as u8;
+        }
+    }
+    let mut out = imageops::resize(&rgba, size, size, imageops::FilterType::Lanczos3);
+    for p in out.pixels_mut() {
+        let a = p[3] as u32;
+        if a > 0 {
+            for c in 0..3 {
+                p[c] = ((p[c] as u32 * 255 + a / 2) / a).min(255) as u8;
+            }
+        }
+    }
+    out.pixels()
+        .map(|p| ((p[3] as u32) << 24) | ((p[0] as u32) << 16) | ((p[1] as u32) << 8) | p[2] as u32)
+        .collect()
+}
 
 fn drag_rect(h: Handle, r: [f32; 4], dx: f32, dy: f32, iw: f32, ih: f32) -> [f32; 4] {
     if h == Handle::Move {
@@ -573,7 +640,7 @@ struct App {
     ctrl: bool,
     side: Fade,
     hover: Option<Hit>,
-    fades: [Fade; 4],
+    fades: [Fade; 6],
     appear: Fade,
     angle: Fade,
     cursor_icon: CursorIcon,
@@ -588,6 +655,8 @@ struct App {
     clipboard: Option<arboard::Clipboard>,
     pending_delete: Option<Instant>,
     exit_requested: bool,
+    picking: bool,
+    logo: Option<(u32, Vec<u32>)>,
     header_dirty: bool,
     sidebar_dirty: bool,
     menu_dirty: bool,
@@ -619,7 +688,7 @@ impl App {
             ctrl: false,
             side: Fade::new(0.0),
             hover: None,
-            fades: [Fade::new(0.0); 4],
+            fades: [Fade::new(0.0); 6],
             appear: Fade { v: 0.0, to: 1.0 },
             angle: Fade::new(0.0),
             cursor_icon: CursorIcon::Default,
@@ -634,6 +703,8 @@ impl App {
             clipboard: None,
             pending_delete: None,
             exit_requested: false,
+            picking: false,
+            logo: None,
             header_dirty: true,
             sidebar_dirty: true,
             menu_dirty: false,
@@ -665,11 +736,13 @@ impl App {
     fn layout(&self) -> Option<Layout> {
         let w = self.window.as_ref()?;
         let size = w.inner_size();
-        Some(Layout::new(
+        let mut lay = Layout::new(
             (size.width, size.height),
             w.scale_factor() as f32,
             self.side.v,
-        ))
+        );
+        lay.empty = self.image.is_none();
+        Some(lay)
     }
 
     fn refresh_info(&mut self) {
@@ -725,6 +798,43 @@ impl App {
                 self.show_toast(format!("{}: {e}", tr("toast.open_failed")));
                 false
             }
+        }
+    }
+
+    fn pick_file(&mut self) {
+        if self.picking || self.dialog.is_some() || self.crop.is_some() {
+            return;
+        }
+        self.close_menu();
+        self.picking = true;
+        let proxy = self.proxy.clone();
+        let start = self
+            .path
+            .as_ref()
+            .and_then(|p| p.parent())
+            .map(|d| d.to_path_buf());
+        std::thread::spawn(move || {
+            let mut dlg = rfd::FileDialog::new()
+                .add_filter("Images", &["png", "jpg", "jpeg", "gif", "webp", "bmp"]);
+            if let Some(dir) = start {
+                dlg = dlg.set_directory(dir);
+            }
+            let _ = proxy.send_event(UserEvent::Picked(dlg.pick_file()));
+        });
+    }
+
+    fn open_external(&mut self, path: PathBuf) {
+        if self.dialog.is_some() || self.crop.is_some() {
+            return;
+        }
+        if self.modified {
+            self.after = After::Open(path);
+            self.open_dialog();
+            return;
+        }
+        self.close_menu();
+        if self.open_path(path) {
+            self.rescan();
         }
     }
 
@@ -1449,6 +1559,19 @@ impl App {
             )
         };
 
+        let (ox, oy) = lay.open_center();
+        let ov = self.fades[Hit::Open.index()].v;
+        btn(&mut *cv, (ox, oy), HOVER, ov);
+        cv.round_rect(ox - 7.0 * s, oy - 6.0 * s, 6.0 * s, 4.0 * s, 1.5 * s, TEXT);
+        cv.round_rect(
+            ox - 7.0 * s,
+            oy - 4.0 * s,
+            14.0 * s,
+            10.0 * s,
+            2.2 * s,
+            TEXT,
+        );
+
         let (ix, iy) = lay.info_center();
         let hv = self.fades[Hit::Info.index()].v;
         btn(
@@ -1483,6 +1606,45 @@ impl App {
         let d = 4.3 * s;
         cv.line(cx - d, cy - d, cx + d, cy + d, 1.6 * s, TEXT);
         cv.line(cx - d, cy + d, cx + d, cy - d, 1.6 * s, TEXT);
+    }
+
+    fn draw_start(&self, cv: &mut Canvas, lay: &Layout) {
+        let s = lay.scale;
+        let (cx, y0) = lay.start_origin();
+        let font = &self.font;
+        let line = |cv: &mut Canvas, text: &str, row_y: f32, row_h: f32, px: f32, color: Rgb| {
+            let Some(lm) = font.horizontal_line_metrics(px) else {
+                return;
+            };
+            let tw = text_width(font, text, px);
+            let baseline = row_y + row_h / 2.0 + (lm.ascent + lm.descent) / 2.0;
+            cv.text(font, text, cx - tw / 2.0, baseline, px, color);
+        };
+
+        line(
+            &mut *cv,
+            tr("empty.title"),
+            y0 + 142.0 * s,
+            26.0 * s,
+            22.0 * s,
+            TEXT,
+        );
+
+        let (bx, by, bw, bh) = lay.start_btn();
+        let hv = self.fades[Hit::Start.index()].v;
+        let fill = lerp(accent(), [255, 255, 255], 0.18 * hv);
+        cv.round_rect(bx, by, bw, bh, 12.0 * s, fill);
+        let dark: Rgb = [0x2b, 0x2d, 0x31];
+        line(&mut *cv, tr("empty.button"), by, bh, 15.0 * s, dark);
+
+        line(
+            &mut *cv,
+            tr("empty.hint"),
+            y0 + 246.0 * s,
+            18.0 * s,
+            13.0 * s,
+            DIM,
+        );
     }
 
     fn draw_sidebar(&self, cv: &mut Canvas, lay: &Layout) {
@@ -1561,7 +1723,7 @@ impl App {
                 busy = true;
                 if i == Hit::OpenFolder.index() {
                     self.sidebar_dirty = true;
-                } else {
+                } else if i != Hit::Start.index() {
                     self.header_dirty = true;
                 }
             }
@@ -1765,6 +1927,41 @@ impl App {
             }
         }
 
+        let mut empty_buf = None;
+        if self.image.is_none() {
+            let sc = lay.scale;
+            let (cx, y0) = lay.start_origin();
+            let (ew, eh) = ((START_W * sc).round() as u32, (START_H * sc).round() as u32);
+            let (ex, ey) = ((cx - ew as f32 / 2.0).round() as i32, y0.round() as i32);
+            let lp = (LOGO_S * sc).round().max(1.0) as u32;
+            if self.logo.as_ref().map(|l| l.0) != Some(lp) {
+                self.logo = Some((lp, logo_pixels(lp)));
+            }
+            let mut eb = vec![0u32; (ew * eh) as usize];
+            if let Some((_, px)) = &self.logo {
+                let n = lp.min(ew) as usize;
+                let lx = (ew.saturating_sub(lp) / 2) as usize;
+                for row in 0..lp.min(eh) as usize {
+                    let src = row * lp as usize;
+                    let dst = row * ew as usize + lx;
+                    if px.len() >= src + n {
+                        eb[dst..dst + n].copy_from_slice(&px[src..src + n]);
+                    }
+                }
+            }
+            self.draw_start(
+                &mut Canvas {
+                    px: &mut eb,
+                    w: ew,
+                    h: eh,
+                    ox: ex,
+                    oy: ey,
+                },
+                &lay,
+            );
+            empty_buf = Some((eb, ew, eh, ex, ey));
+        }
+
         let Some(gpu) = self.gpu.as_mut() else { return };
         if let Some(anim) = &mut self.anim {
             if let Some(frame) = anim.take_dirty() {
@@ -1788,6 +1985,9 @@ impl App {
         }
         if let Some((db, dw, dh)) = &dialog_buf {
             gpu.set_overlay(gpu::DIALOG, db, *dw, *dh);
+        }
+        if let Some((eb, ew, eh, _, _)) = &empty_buf {
+            gpu.set_overlay(gpu::EMPTY, eb, *ew, *eh);
         }
 
         let square = self
@@ -1825,6 +2025,9 @@ impl App {
             draw_crop(gpu, lay.scale, c, im, (vx, vy, vw, vh));
         }
 
+        if let Some((_, _, _, ex, ey)) = &empty_buf {
+            gpu.draw_overlay(gpu::EMPTY, *ex, *ey, 1.0);
+        }
         if lay.sidebar_w > 0 {
             gpu.draw_overlay(gpu::SIDEBAR, w as i32 - lay.sidebar_w, lay.side_oy(), 1.0);
         }
@@ -1892,7 +2095,9 @@ impl ApplicationHandler<UserEvent> for App {
             .with_window_icon(window_icon());
         #[cfg(target_os = "linux")]
         let attrs = {
-            use winit::platform::{wayland::WindowAttributesExtWayland, x11::WindowAttributesExtX11};
+            use winit::platform::{
+                wayland::WindowAttributesExtWayland, x11::WindowAttributesExtX11,
+            };
             let attrs = WindowAttributesExtWayland::with_name(attrs, APP_ID, APP_ID);
             WindowAttributesExtX11::with_name(attrs, APP_ID, APP_ID)
         };
@@ -1918,6 +2123,12 @@ impl ApplicationHandler<UserEvent> for App {
 
     fn user_event(&mut self, _el: &ActiveEventLoop, event: UserEvent) {
         match event {
+            UserEvent::Picked(path) => {
+                self.picking = false;
+                if let Some(path) = path {
+                    self.open_external(path);
+                }
+            }
             UserEvent::Printed(Ok(())) => self.show_toast(tr("toast.print_sent").to_string()),
             UserEvent::Printed(Err(e)) => {
                 let short: String = e.lines().next().unwrap_or("").chars().take(60).collect();
@@ -1986,12 +2197,15 @@ impl ApplicationHandler<UserEvent> for App {
                     PhysicalKey::Code(KeyCode::Enter | KeyCode::NumpadEnter) => {
                         if self.crop.is_some() {
                             self.apply_crop();
+                        } else if self.image.is_none() {
+                            self.pick_file();
                         }
                     }
                     PhysicalKey::Code(KeyCode::Digit0) | PhysicalKey::Code(KeyCode::Numpad0) => {
                         self.close_menu();
                         self.apply(Action::ResetZoom);
                     }
+                    PhysicalKey::Code(KeyCode::KeyO) if self.ctrl => self.pick_file(),
                     PhysicalKey::Code(KeyCode::KeyR) if !self.ctrl => {
                         self.close_menu();
                         self.rotate(!self.shift);
@@ -2147,6 +2361,7 @@ impl ApplicationHandler<UserEvent> for App {
                     Some(Hit::Info) => self.toggle_sidebar(),
                     Some(Hit::More) => self.open_settings(),
                     Some(Hit::OpenFolder) => self.open_folder(),
+                    Some(Hit::Open | Hit::Start) => self.pick_file(),
                     None if self.cursor.1 < lay.top_h as f64 => {
                         let _ = window.drag_window();
                     }
@@ -2181,20 +2396,7 @@ impl ApplicationHandler<UserEvent> for App {
 
                 self.update_pointer();
             }
-            WindowEvent::DroppedFile(path) => {
-                if self.dialog.is_some() || self.crop.is_some() {
-                    return;
-                }
-                if self.modified {
-                    self.after = After::Open(path);
-                    self.open_dialog();
-                    return;
-                }
-                self.close_menu();
-                if self.open_path(path) {
-                    self.rescan();
-                }
-            }
+            WindowEvent::DroppedFile(path) => self.open_external(path),
             WindowEvent::RedrawRequested => self.render(),
             _ => {}
         }

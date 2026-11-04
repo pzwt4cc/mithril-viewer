@@ -10,6 +10,7 @@ license=('MIT')
 depends=('gcc-libs' 'glibc' 'fontconfig' 'libglvnd' 'libx11' 'libxkbcommon' 'wayland')
 makedepends=('cargo' 'git')
 optdepends=('cups: printing support'
+            'xdg-desktop-portal: file chooser for the Open button (plus a gtk or kde backend)'
             'xdg-utils: open the containing folder')
 provides=("$_pkgname")
 conflicts=("$_pkgname")
@@ -33,6 +34,7 @@ build() {
   cd "$_pkgname"
   export RUSTUP_TOOLCHAIN=stable
   export CARGO_TARGET_DIR=target
+  export RUSTFLAGS="${RUSTFLAGS:-} --remap-path-prefix=$srcdir=src"
   cargo build --frozen --release
 }
 

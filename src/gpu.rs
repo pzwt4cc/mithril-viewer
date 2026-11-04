@@ -30,7 +30,8 @@ pub const BLACK: usize = 5;
 pub const WHITE: usize = 6;
 pub const BAR: usize = 7;
 pub const DIALOG: usize = 8;
-const OVERLAYS: usize = 9;
+pub const EMPTY: usize = 9;
+const OVERLAYS: usize = 10;
 
 const VERT: &str = r#"#version 300 es
 uniform vec4 u_rect;

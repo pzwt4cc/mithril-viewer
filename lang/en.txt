@@ -43,3 +43,6 @@ toast.crop_gif = Can't crop an animated GIF
 toast.open_failed = Couldn't open
 settings.opacity = Window opacity
 settings.accent = Accent color
+empty.title = Open an image
+empty.button = Open image…
+empty.hint = or press Ctrl+O
