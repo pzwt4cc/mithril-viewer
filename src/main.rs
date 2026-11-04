@@ -38,8 +38,6 @@ use info::Info;
 use menu::{Action, Menu};
 use modal::{BarAction, CropBar, Dialog, DialogAction};
 
-/// Идентификатор приложения: Wayland app_id / X11 WM_CLASS.
-/// Должен совпадать с именем mithril-viewer.desktop и иконки в теме.
 const APP_ID: &str = "mithril-viewer";
 
 static ICON_PNG: &[u8] = include_bytes!("../data/icons/hicolor/256x256/apps/mithril-viewer.png");
