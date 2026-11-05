@@ -22,7 +22,6 @@ menu.delete_permanent = Удалить навсегда
 toast.copied = Скопировано в буфер
 toast.copy_failed = Не удалось скопировать
 toast.delete_failed = Не удалось удалить
-toast.confirm_delete = Повторите, чтобы удалить навсегда
 lang.name = Русский
 settings.language = Язык
 settings.auto = Автоматически

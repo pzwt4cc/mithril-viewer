@@ -851,7 +851,6 @@ struct App {
     modified: bool,
     proxy: EventLoopProxy<UserEvent>,
     clipboard: Option<arboard::Clipboard>,
-    pending_delete: Option<Instant>,
     exit_requested: bool,
     picking: bool,
     logo: Option<(u32, Vec<u32>)>,
@@ -901,7 +900,6 @@ impl App {
             modified: false,
             proxy,
             clipboard: None,
-            pending_delete: None,
             exit_requested: false,
             picking: false,
             logo: None,
@@ -986,7 +984,6 @@ impl App {
                 self.anim = l.anim;
                 self.path = Some(path);
                 self.modified = false;
-                self.pending_delete = None;
                 self.view = View::default();
                 self.angle = Fade::new(0.0);
                 self.appear = Fade { v: 0.0, to: 1.0 };
@@ -1247,7 +1244,6 @@ impl App {
             }
             Action::SetDeleteMode(mode) => {
                 self.config.delete_mode = mode;
-                self.pending_delete = None;
                 config::save(&self.config);
             }
         }
@@ -1313,16 +1309,6 @@ impl App {
         let Some(path) = self.path.clone() else {
             return;
         };
-        if self.config.delete_mode == DeleteMode::Permanent {
-            let confirmed = self
-                .pending_delete
-                .is_some_and(|t| t.elapsed() < Duration::from_secs(4));
-            if !confirmed {
-                self.pending_delete = Some(Instant::now());
-                self.show_toast(tr("toast.confirm_delete").to_string());
-                return;
-            }
-        }
         let result = match self.config.delete_mode {
             DeleteMode::Trash => trash::delete(&path).map_err(|e| e.to_string()),
             DeleteMode::Permanent => std::fs::remove_file(&path).map_err(|e| e.to_string()),
@@ -1330,7 +1316,6 @@ impl App {
         match result {
             Ok(()) => self.after_delete(),
             Err(e) => {
-                self.pending_delete = None;
                 self.show_toast(format!("{}: {e}", tr("toast.delete_failed")));
             }
         }

@@ -22,7 +22,6 @@ menu.delete_permanent = Delete permanently
 toast.copied = Copied to clipboard
 toast.copy_failed = Couldn't copy
 toast.delete_failed = Couldn't delete
-toast.confirm_delete = Repeat to delete permanently
 lang.name = English
 settings.language = Language
 settings.auto = Automatic
