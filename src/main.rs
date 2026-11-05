@@ -85,6 +85,7 @@ const START_H: f32 = 264.0;
 const START_BTN_W: f32 = 240.0;
 const START_BTN_H: f32 = 46.0;
 const RATIO_W: f32 = 108.0;
+const NAV_REPEAT: Duration = Duration::from_millis(60);
 const RATIO_ROW: f32 = 32.0;
 const RATIO_GAP: f32 = 2.0;
 const RATIO_PAD: f32 = 6.0;
@@ -537,6 +538,15 @@ fn logo_pixels(size: u32) -> Vec<u32> {
         .collect()
 }
 
+fn is_nav_key(k: PhysicalKey) -> bool {
+    matches!(
+        k,
+        PhysicalKey::Code(
+            KeyCode::ArrowLeft | KeyCode::ArrowRight | KeyCode::PageUp | KeyCode::PageDown
+        )
+    )
+}
+
 fn ratio_rect(r: f32, c: (f32, f32), iw: f32, ih: f32) -> [f32; 4] {
     let w = iw.min(ih * r);
     let h = w / r;
@@ -768,6 +778,7 @@ struct App {
     picking: bool,
     logo: Option<(u32, Vec<u32>)>,
     ratio_hover: Option<usize>,
+    last_nav: Option<Instant>,
     header_dirty: bool,
     sidebar_dirty: bool,
     menu_dirty: bool,
@@ -817,6 +828,7 @@ impl App {
             picking: false,
             logo: None,
             ratio_hover: None,
+            last_nav: None,
             header_dirty: true,
             sidebar_dirty: true,
             menu_dirty: false,
@@ -967,8 +979,19 @@ impl App {
             let path = self.siblings[i as usize].clone();
             if self.open_path(path) {
                 self.index = i as usize;
+                self.last_nav = Some(Instant::now());
                 return;
             }
+        }
+    }
+
+    fn nav_key(&mut self, delta: isize, repeat: bool) {
+        if repeat && self.last_nav.is_some_and(|t| t.elapsed() < NAV_REPEAT) {
+            return;
+        }
+        self.navigate(delta);
+        if repeat {
+            self.appear = Fade { v: 1.0, to: 1.0 };
         }
     }
 
@@ -2404,7 +2427,8 @@ impl ApplicationHandler<UserEvent> for App {
                 self.ctrl = m.state().control_key();
             }
             WindowEvent::KeyboardInput { event, .. }
-                if event.state.is_pressed() && !event.repeat =>
+                if event.state.is_pressed()
+                    && (!event.repeat || is_nav_key(event.physical_key)) =>
             {
                 if self.dialog.is_some() {
                     match event.physical_key {
@@ -2459,10 +2483,10 @@ impl ApplicationHandler<UserEvent> for App {
                         self.request_delete();
                     }
                     PhysicalKey::Code(KeyCode::ArrowRight | KeyCode::PageDown) => {
-                        self.navigate(1);
+                        self.nav_key(1, event.repeat);
                     }
                     PhysicalKey::Code(KeyCode::ArrowLeft | KeyCode::PageUp) => {
-                        self.navigate(-1);
+                        self.nav_key(-1, event.repeat);
                     }
                     PhysicalKey::Code(KeyCode::KeyI) => self.toggle_sidebar(),
                     _ => {}
