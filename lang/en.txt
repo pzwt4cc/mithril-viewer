@@ -46,3 +46,5 @@ settings.accent = Accent color
 empty.title = Open an image
 empty.button = Open image…
 empty.hint = or press Ctrl+O
+crop.free = Free
+crop.original = Original

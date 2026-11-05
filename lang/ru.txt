@@ -46,3 +46,5 @@ settings.accent = Цвет акцента
 empty.title = Откройте изображение
 empty.button = Открыть изображение…
 empty.hint = или нажмите Ctrl+O
+crop.free = Свободно
+crop.original = Оригинал

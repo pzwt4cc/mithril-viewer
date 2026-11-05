@@ -31,7 +31,8 @@ pub const WHITE: usize = 6;
 pub const BAR: usize = 7;
 pub const DIALOG: usize = 8;
 pub const EMPTY: usize = 9;
-const OVERLAYS: usize = 10;
+pub const RATIOS: usize = 10;
+const OVERLAYS: usize = 11;
 
 const VERT: &str = r#"#version 300 es
 uniform vec4 u_rect;

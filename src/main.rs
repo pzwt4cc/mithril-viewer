@@ -84,6 +84,10 @@ const START_W: f32 = 340.0;
 const START_H: f32 = 264.0;
 const START_BTN_W: f32 = 240.0;
 const START_BTN_H: f32 = 46.0;
+const RATIO_W: f32 = 108.0;
+const RATIO_ROW: f32 = 32.0;
+const RATIO_GAP: f32 = 2.0;
+const RATIO_PAD: f32 = 6.0;
 
 const SIDEBAR_W: f32 = 332.0;
 const PANEL_L: f32 = 16.0;
@@ -169,6 +173,23 @@ enum After {
 }
 
 #[derive(Clone, Copy, PartialEq)]
+enum Preset {
+    Free,
+    Original,
+    Fixed(u32, u32),
+}
+
+const PRESETS: [Preset; 7] = [
+    Preset::Free,
+    Preset::Original,
+    Preset::Fixed(1, 1),
+    Preset::Fixed(4, 3),
+    Preset::Fixed(3, 2),
+    Preset::Fixed(5, 4),
+    Preset::Fixed(16, 9),
+];
+
+#[derive(Clone, Copy, PartialEq)]
 enum Handle {
     Move,
     N,
@@ -191,6 +212,8 @@ struct Drag {
 struct Crop {
     rect: [f32; 4],
     drag: Option<Drag>,
+    preset: usize,
+    flip: bool,
     bar: CropBar,
     bar_dirty: bool,
 }
@@ -402,6 +425,44 @@ impl Layout {
         )
     }
 
+    fn ratio_panel(&self) -> (f32, f32, f32, f32, f32) {
+        let s = self.scale;
+        let n = PRESETS.len() as f32;
+        let (pad, gap) = (RATIO_PAD * s, RATIO_GAP * s);
+        let avail = self.win.1 as f32 - self.top_h as f32 - 2.0 * MARGIN * s;
+        let row = (RATIO_ROW * s).min(((avail - 2.0 * pad - gap * (n - 1.0)) / n).max(16.0 * s));
+        let h = 2.0 * pad + row * n + gap * (n - 1.0);
+        let top = self.top_h as f32;
+        let y = top + (self.win.1 as f32 - top - h) / 2.0;
+        (MARGIN * s, y, RATIO_W * s, h, row)
+    }
+
+    fn ratio_row(&self, i: usize) -> (f32, f32, f32, f32) {
+        let s = self.scale;
+        let (x, y, w, _, row) = self.ratio_panel();
+        (
+            x + RATIO_PAD * s,
+            y + RATIO_PAD * s + i as f32 * (row + RATIO_GAP * s),
+            w - 2.0 * RATIO_PAD * s,
+            row,
+        )
+    }
+
+    fn ratio_at(&self, p: (f64, f64)) -> Option<usize> {
+        (0..PRESETS.len()).find(|&i| {
+            let r = self.ratio_row(i);
+            p.0 >= r.0 as f64
+                && p.0 <= (r.0 + r.2) as f64
+                && p.1 >= r.1 as f64
+                && p.1 <= (r.1 + r.3) as f64
+        })
+    }
+
+    fn on_ratio_panel(&self, p: (f64, f64)) -> bool {
+        let (x, y, w, h, _) = self.ratio_panel();
+        p.0 >= x as f64 && p.0 <= (x + w) as f64 && p.1 >= y as f64 && p.1 <= (y + h) as f64
+    }
+
     fn start_origin(&self) -> (f32, f32) {
         let block_h = START_H * self.scale;
         let cx = (self.win.0 as i32 - self.sidebar_w) as f32 / 2.0;
@@ -474,6 +535,57 @@ fn logo_pixels(size: u32) -> Vec<u32> {
     out.pixels()
         .map(|p| ((p[3] as u32) << 24) | ((p[0] as u32) << 16) | ((p[1] as u32) << 8) | p[2] as u32)
         .collect()
+}
+
+fn ratio_rect(r: f32, c: (f32, f32), iw: f32, ih: f32) -> [f32; 4] {
+    let w = iw.min(ih * r);
+    let h = w / r;
+    let x = (c.0 - w / 2.0).clamp(0.0, (iw - w).max(0.0));
+    let y = (c.1 - h / 2.0).clamp(0.0, (ih - h).max(0.0));
+    [x, y, x + w, y + h]
+}
+
+fn lock_ratio(h: Handle, start: [f32; 4], free: [f32; 4], r: f32, iw: f32, ih: f32) -> [f32; 4] {
+    if h == Handle::Move {
+        return free;
+    }
+    let [x0, y0, x1, y1] = start;
+    let (cx, cy) = ((x0 + x1) / 2.0, (y0 + y1) / 2.0);
+    let (fw, fh) = (free[2] - free[0], free[3] - free[1]);
+    let min_w = MIN_CROP.min(iw).max(MIN_CROP.min(ih) * r);
+    match h {
+        Handle::NW | Handle::NE | Handle::SW | Handle::SE => {
+            let right = matches!(h, Handle::NE | Handle::SE);
+            let down = matches!(h, Handle::SW | Handle::SE);
+            let ax = if right { x0 } else { x1 };
+            let ay = if down { y0 } else { y1 };
+            let max_w =
+                (if right { iw - ax } else { ax }).min((if down { ih - ay } else { ay }) * r);
+            let w = fw.max(fh * r).max(min_w).min(max_w);
+            let hh = w / r;
+            let (nx0, nx1) = if right { (ax, ax + w) } else { (ax - w, ax) };
+            let (ny0, ny1) = if down { (ay, ay + hh) } else { (ay - hh, ay) };
+            [nx0, ny0, nx1, ny1]
+        }
+        Handle::E | Handle::W => {
+            let east = h == Handle::E;
+            let ax = if east { x0 } else { x1 };
+            let max_w = (if east { iw - ax } else { ax }).min(2.0 * cy.min(ih - cy) * r);
+            let w = fw.max(min_w).min(max_w);
+            let hh = w / r;
+            let (nx0, nx1) = if east { (ax, ax + w) } else { (ax - w, ax) };
+            [nx0, cy - hh / 2.0, nx1, cy + hh / 2.0]
+        }
+        _ => {
+            let south = h == Handle::S;
+            let ay = if south { y0 } else { y1 };
+            let max_h = (if south { ih - ay } else { ay }).min(2.0 * cx.min(iw - cx) / r);
+            let hh = fh.max(min_w / r).min(max_h);
+            let w = hh * r;
+            let (ny0, ny1) = if south { (ay, ay + hh) } else { (ay - hh, ay) };
+            [cx - w / 2.0, ny0, cx + w / 2.0, ny1]
+        }
+    }
 }
 
 fn drag_rect(h: Handle, r: [f32; 4], dx: f32, dy: f32, iw: f32, ih: f32) -> [f32; 4] {
@@ -655,6 +767,7 @@ struct App {
     exit_requested: bool,
     picking: bool,
     logo: Option<(u32, Vec<u32>)>,
+    ratio_hover: Option<usize>,
     header_dirty: bool,
     sidebar_dirty: bool,
     menu_dirty: bool,
@@ -703,6 +816,7 @@ impl App {
             exit_requested: false,
             picking: false,
             logo: None,
+            ratio_hover: None,
             header_dirty: true,
             sidebar_dirty: true,
             menu_dirty: false,
@@ -1132,6 +1246,16 @@ impl App {
             window.request_redraw();
         }
 
+        let rh = if self.crop.is_some() && self.dialog.is_none() {
+            lay.ratio_at(self.cursor)
+        } else {
+            None
+        };
+        if rh != self.ratio_hover {
+            self.ratio_hover = rh;
+            window.request_redraw();
+        }
+
         let mut icon = if window.is_maximized() || self.dialog.is_some() {
             CursorIcon::Default
         } else {
@@ -1167,6 +1291,9 @@ impl App {
 
     fn crop_hit(&self, lay: &Layout, p: (f64, f64)) -> Option<Handle> {
         let c = self.crop.as_ref()?;
+        if lay.on_ratio_panel(p) {
+            return None;
+        }
         let ([x0, y0, x1, y1], _) = self.crop_screen(lay, c.rect)?;
         let t = (10.0 * lay.scale) as f64;
         let (x0, y0, x1, y1) = (x0 as f64, y0 as f64, x1 as f64, y1 as f64);
@@ -1207,9 +1334,52 @@ impl App {
         self.crop = Some(Crop {
             rect: [mx, my, iw as f32 - mx, ih as f32 - my],
             drag: None,
+            preset: 0,
+            flip: false,
             bar: CropBar::new(&self.font, lay.scale),
             bar_dirty: true,
         });
+        self.ratio_hover = None;
+        self.redraw();
+    }
+
+    fn crop_ratio(&self) -> Option<f32> {
+        let c = self.crop.as_ref()?;
+        let (iw, ih) = self.image.as_ref()?.dimensions();
+        let r = match PRESETS[c.preset] {
+            Preset::Free => return None,
+            Preset::Original => iw as f32 / ih as f32,
+            Preset::Fixed(a, b) => a as f32 / b as f32,
+        };
+        Some(if c.flip { 1.0 / r } else { r })
+    }
+
+    fn set_crop_preset(&mut self, i: usize) {
+        let Some((iw, ih)) = self.image.as_ref().map(|im| im.dimensions()) else {
+            return;
+        };
+        let center = {
+            let Some(c) = &mut self.crop else { return };
+            if c.preset == i {
+                if matches!(
+                    PRESETS[i],
+                    Preset::Free | Preset::Original | Preset::Fixed(1, 1)
+                ) {
+                    return;
+                }
+                c.flip = !c.flip;
+            } else {
+                c.preset = i;
+                c.flip = false;
+            }
+            c.drag = None;
+            ((c.rect[0] + c.rect[2]) / 2.0, (c.rect[1] + c.rect[3]) / 2.0)
+        };
+        if let Some(r) = self.crop_ratio() {
+            if let Some(c) = &mut self.crop {
+                c.rect = ratio_rect(r, center, iw as f32, ih as f32);
+            }
+        }
         self.redraw();
     }
 
@@ -1269,11 +1439,16 @@ impl App {
         };
         let k = self.view.cur_scale.max(1e-6);
         let cursor = self.cursor;
+        let ratio = self.crop_ratio();
         let Some(c) = &mut self.crop else { return };
         let Some(d) = c.drag else { return };
         let dx = (cursor.0 - d.start.0) as f32 / k;
         let dy = (cursor.1 - d.start.1) as f32 / k;
-        c.rect = drag_rect(d.handle, d.rect, dx, dy, iw as f32, ih as f32);
+        let free = drag_rect(d.handle, d.rect, dx, dy, iw as f32, ih as f32);
+        c.rect = match ratio {
+            Some(r) => lock_ratio(d.handle, d.rect, free, r, iw as f32, ih as f32),
+            None => free,
+        };
         self.redraw();
     }
 
@@ -1606,6 +1781,36 @@ impl App {
         cv.line(cx - d, cy + d, cx + d, cy - d, 1.6 * s, TEXT);
     }
 
+    fn draw_ratios(&self, cv: &mut Canvas, lay: &Layout) {
+        let Some(c) = &self.crop else { return };
+        let s = lay.scale;
+        let (x, y, w, h, _) = lay.ratio_panel();
+        surface(cv, x, y, w, h, R_PANEL * s, s);
+        let px = 13.0 * s;
+        let dark: Rgb = [0x2b, 0x2d, 0x31];
+        let Some(lm) = self.font.horizontal_line_metrics(px) else {
+            return;
+        };
+        for (i, preset) in PRESETS.iter().enumerate() {
+            let (rx, ry, rw, rh) = lay.ratio_row(i);
+            let active = c.preset == i;
+            if active {
+                cv.round_rect(rx, ry, rw, rh, R_ITEM * s, accent());
+            } else if self.ratio_hover == Some(i) {
+                cv.round_rect(rx, ry, rw, rh, R_ITEM * s, HOVER);
+            }
+            let label = match *preset {
+                Preset::Free => tr("crop.free").to_string(),
+                Preset::Original => tr("crop.original").to_string(),
+                Preset::Fixed(a, b) if c.flip => format!("{b}:{a}"),
+                Preset::Fixed(a, b) => format!("{a}:{b}"),
+            };
+            let baseline = ry + rh / 2.0 + (lm.ascent + lm.descent) / 2.0;
+            let color = if active { dark } else { TEXT };
+            cv.text(&self.font, &label, rx + 10.0 * s, baseline, px, color);
+        }
+    }
+
     fn draw_start(&self, cv: &mut Canvas, lay: &Layout) {
         let s = lay.scale;
         let (cx, y0) = lay.start_origin();
@@ -1925,6 +2130,29 @@ impl App {
             }
         }
 
+        let mut ratio_buf = None;
+        if self.crop.is_some() {
+            let (px, py, pw, ph, _) = lay.ratio_panel();
+            let pad = ((SHADOW_PAD + 2.0) * lay.scale).ceil();
+            let (rw, rh) = (
+                (pw + 2.0 * pad).ceil() as u32,
+                (ph + 2.0 * pad).ceil() as u32,
+            );
+            let (rx, ry) = ((px - pad).floor() as i32, (py - pad).floor() as i32);
+            let mut rb = vec![0u32; (rw * rh) as usize];
+            self.draw_ratios(
+                &mut Canvas {
+                    px: &mut rb,
+                    w: rw,
+                    h: rh,
+                    ox: rx,
+                    oy: ry,
+                },
+                &lay,
+            );
+            ratio_buf = Some((rb, rw, rh, rx, ry));
+        }
+
         let mut empty_buf = None;
         if self.image.is_none() {
             let sc = lay.scale;
@@ -1987,6 +2215,9 @@ impl App {
         if let Some((eb, ew, eh, _, _)) = &empty_buf {
             gpu.set_overlay(gpu::EMPTY, eb, *ew, *eh);
         }
+        if let Some((rb, rw, rh, _, _)) = &ratio_buf {
+            gpu.set_overlay(gpu::RATIOS, rb, *rw, *rh);
+        }
 
         let square = self
             .window
@@ -2030,6 +2261,9 @@ impl App {
             gpu.draw_overlay(gpu::SIDEBAR, w as i32 - lay.sidebar_w, lay.side_oy(), 1.0);
         }
         gpu.draw_overlay(gpu::HEADER, 0, 0, 1.0);
+        if let Some((_, _, _, rx, ry)) = &ratio_buf {
+            gpu.draw_overlay(gpu::RATIOS, *rx, *ry, 1.0);
+        }
         if let Some(c) = &self.crop {
             let (bx, by) = c.bar.origin((vx, vy, vw, vh));
             let pad = c.bar.pad();
@@ -2348,6 +2582,15 @@ impl ApplicationHandler<UserEvent> for App {
                         p.0 >= 0.0 && p.1 >= 0.0 && p.0 < c.bar.w as f32 && p.1 < c.bar.h as f32
                     });
                     if on_bar {
+                        return;
+                    }
+                }
+                if self.crop.is_some() {
+                    if let Some(i) = lay.ratio_at(self.cursor) {
+                        self.set_crop_preset(i);
+                        return;
+                    }
+                    if lay.on_ratio_panel(self.cursor) {
                         return;
                     }
                 }
