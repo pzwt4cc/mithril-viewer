@@ -267,6 +267,7 @@ struct App {
     toast: Option<Toast>,
     crop: Option<Crop>,
     crop_backup: Option<(RgbaImage, Option<Source>, Option<Info>, bool)>,
+    rotation: u8,
     dialog: Option<Dialog>,
     dialog_dirty: bool,
     modified: bool,
@@ -319,6 +320,7 @@ impl App {
             toast: None,
             crop: None,
             crop_backup: None,
+            rotation: 0,
             dialog: None,
             dialog_dirty: false,
             modified: false,
@@ -410,6 +412,7 @@ impl App {
                 self.anim = l.anim;
                 self.path = Some(path);
                 self.modified = false;
+                self.rotation = 0;
                 self.view = View::default();
                 self.angle = Fade::new(0.0);
                 self.appear = Fade { v: 0.0, to: 1.0 };
@@ -673,13 +676,18 @@ impl App {
         } else {
             imageops::rotate270(&img)
         };
+        self.rotation = if clockwise {
+            (self.rotation + 1) % 4
+        } else {
+            (self.rotation + 3) % 4
+        };
         if let Some(anim) = &mut self.anim {
             anim.rotate(clockwise);
         } else {
             if let Some(gpu) = &mut self.gpu {
                 gpu.set_image(&rotated);
             }
-            self.modified = true;
+            self.modified = self.rotation != 0;
         }
         self.image = Some(rotated);
         self.view.reset();
@@ -967,6 +975,7 @@ impl App {
         self.sidebar_dirty = true;
         self.view.reset();
         self.modified = true;
+        self.rotation = 0;
         self.redraw();
         true
     }
@@ -1180,6 +1189,7 @@ impl App {
         let path = self.path.clone().ok_or("no path")?;
         self.save_to_path(&path)?;
         self.modified = false;
+        self.rotation = 0;
         self.refresh_info();
         self.sidebar_dirty = true;
         self.header_dirty = true;
