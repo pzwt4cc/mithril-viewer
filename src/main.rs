@@ -46,7 +46,7 @@ use menu::{Action, Menu};
 use ui::{draw_header, draw_sidebar, draw_start};
 use nav::first_image;
 use view::{View, fit_scale};
-use modal::{BarAction, CropBar, Dialog, DialogAction};
+use modal::{BarAction, CropBar, CropField, Dialog, DialogAction};
 
 const APP_ID: &str = "mithril-viewer";
 
@@ -257,6 +257,8 @@ struct App {
     shift: bool,
     ctrl: bool,
     side: Fade,
+    header_hide: Fade,
+    drag_hide: Fade,
     hover: Option<Hit>,
     fades: [Fade; 7],
     appear: Fade,
@@ -310,6 +312,8 @@ impl App {
             shift: false,
             ctrl: false,
             side: Fade::new(0.0),
+            header_hide: Fade::new(0.0),
+            drag_hide: Fade::new(0.0),
             hover: None,
             fades: [Fade::new(0.0); 7],
             appear: Fade { v: 0.0, to: 1.0 },
@@ -413,6 +417,8 @@ impl App {
                 self.path = Some(path);
                 self.modified = false;
                 self.rotation = 0;
+                self.header_hide = Fade::new(0.0);
+                self.drag_hide = Fade::new(0.0);
                 self.view = View::default();
                 self.angle = Fade::new(0.0);
                 self.appear = Fade { v: 0.0, to: 1.0 };
@@ -955,6 +961,24 @@ impl App {
         }
     }
 
+    fn commit_crop_field(&mut self) {
+        let Some((iw, ih)) = self.image.as_ref().map(|im| im.dimensions()) else { return };
+        let Some(c) = &mut self.crop else { return };
+        let cur_w = (c.rect[2] - c.rect[0]).round().max(1.0) as u32;
+        let cur_h = (c.rect[3] - c.rect[1]).round().max(1.0) as u32;
+        let new_w = c.bar.buf_w.parse::<u32>().unwrap_or(cur_w).clamp(1, iw);
+        let new_h = c.bar.buf_h.parse::<u32>().unwrap_or(cur_h).clamp(1, ih);
+        let cx = (c.rect[0] + c.rect[2]) / 2.0;
+        let cy = (c.rect[1] + c.rect[3]) / 2.0;
+        let x0 = (cx - new_w as f32 / 2.0).clamp(0.0, (iw - new_w) as f32);
+        let y0 = (cy - new_h as f32 / 2.0).clamp(0.0, (ih - new_h) as f32);
+        c.rect = [x0, y0, x0 + new_w as f32, y0 + new_h as f32];
+        c.preset = 0; // custom dimensions switch preset to Free
+        c.bar.editing = None;
+        c.bar_dirty = true;
+        self.redraw();
+    }
+
     fn perform_crop(&mut self) -> bool {
         let Some(c) = self.crop.take() else { return false };
         let Some(img) = self.image.as_ref() else {
@@ -1328,6 +1352,15 @@ impl App {
             busy = true;
             self.header_dirty = true;
         }
+        self.header_hide.to = if self.crop_active() { 1.0 } else { 0.0 };
+        if self.header_hide.step(dt, 20.0) {
+            busy = true;
+        }
+        let is_crop_dragging = self.crop.as_ref().is_some_and(|c| c.drag.is_some());
+        self.drag_hide.to = if is_crop_dragging { 1.0 } else { 0.0 };
+        if self.drag_hide.step(dt, 24.0) {
+            busy = true;
+        }
         for (i, f) in self.fades.iter_mut().enumerate() {
             if f.step(dt, 20.0) {
                 busy = true;
@@ -1503,14 +1536,16 @@ impl App {
             None => None,
         };
         if let Some(c) = &mut self.crop {
-            let label = format!(
-                "{} × {}",
-                (c.rect[2] - c.rect[0]).round() as u32,
-                (c.rect[3] - c.rect[1]).round() as u32
-            );
+            let rw = (c.rect[2] - c.rect[0]).round().max(1.0) as u32;
+            let rh = (c.rect[3] - c.rect[1]).round().max(1.0) as u32;
+            let label = format!("{rw} × {rh}");
             if c.bar.label != label {
                 c.bar.label = label;
                 c.bar_dirty = true;
+            }
+            if c.bar.editing.is_none() {
+                c.bar.buf_w = rw.to_string();
+                c.bar.buf_h = rh.to_string();
             }
         }
 
@@ -1697,21 +1732,33 @@ impl App {
         if let Some((ex, ey)) = empty_pos {
             gpu.draw_overlay(gpu::EMPTY, ex, ey, 1.0);
         }
-        if lay.sidebar_w > 0 {
-            gpu.draw_overlay(gpu::SIDEBAR, w as i32 - lay.sidebar_w, lay.side_oy(), 1.0);
+        let h_alpha = 1.0 - self.header_hide.v;
+        if lay.sidebar_w > 0 && h_alpha > 0.001 {
+            let s_shift = (self.header_hide.v * lay.sidebar_w as f32).round() as i32;
+            gpu.draw_overlay(gpu::SIDEBAR, w as i32 - lay.sidebar_w + s_shift, lay.side_oy(), h_alpha);
         }
-        gpu.draw_overlay(gpu::HEADER, 0, 0, 1.0);
+        if h_alpha > 0.001 {
+            let h_lift = -((self.header_hide.v * lay.top_h as f32).round() as i32);
+            gpu.draw_overlay(gpu::HEADER, 0, h_lift, h_alpha);
+        }
+        let drag_alpha = 1.0 - self.drag_hide.v;
         if let (Some((rw, _, rx, ry)), Some(c)) = (ratio_rect, &self.crop) {
             let t = 1.0 - c.appear.v;
             let travel = (vx + vw as i32 - rx) as f32;
-            let shift = (t * travel.max(rw as f32)).round() as i32;
-            gpu.draw_overlay(gpu::RATIOS, rx + shift, ry, c.appear.v);
+            let shift = (t * travel.max(rw as f32) + self.drag_hide.v * travel.max(rw as f32)).round() as i32;
+            let a = c.appear.v * drag_alpha;
+            if a > 0.001 {
+                gpu.draw_overlay(gpu::RATIOS, rx + shift, ry, a);
+            }
         }
         if let Some(c) = &self.crop {
             let (bx, by) = c.bar.origin((vx, vy, vw, vh));
             let pad = c.bar.pad();
-            let lift = ((1.0 - c.appear.v) * 18.0 * lay.scale).round() as i32;
-            gpu.draw_overlay(gpu::BAR, bx - pad, by - pad + lift, c.appear.v);
+            let lift = (((1.0 - c.appear.v) * 18.0 + self.drag_hide.v * 36.0) * lay.scale).round() as i32;
+            let a = c.appear.v * drag_alpha;
+            if a > 0.001 {
+                gpu.draw_overlay(gpu::BAR, bx - pad, by - pad + lift, a);
+            }
         }
         if let Some(menu) = &self.menu {
             let lift = ((1.0 - menu.appear.v) * 6.0 * lay.scale) as i32;
@@ -1854,9 +1901,30 @@ impl ApplicationHandler<UserEvent> for App {
                 self.ctrl = m.state().control_key();
             }
             WindowEvent::KeyboardInput { event, .. }
-                if event.state.is_pressed()
-                    && (!event.repeat || is_nav_key(event.physical_key)) =>
+                if event.state.is_pressed() =>
             {
+                if let Some(c) = &mut self.crop {
+                    if let Some(field) = c.bar.editing {
+                        if let Some(txt) = event.text.as_ref() {
+                            let digits: String = txt.chars().filter(|ch| ch.is_ascii_digit()).collect();
+                            if !digits.is_empty() {
+                                let buf = match field {
+                                    CropField::W => &mut c.bar.buf_w,
+                                    CropField::H => &mut c.bar.buf_h,
+                                };
+                                if buf.len() < 5 {
+                                    buf.push_str(&digits);
+                                    c.bar_dirty = true;
+                                    self.redraw();
+                                    return;
+                                }
+                            }
+                        }
+                    }
+                }
+                if event.repeat && !is_nav_key(event.physical_key) {
+                    return;
+                }
                 if self.dialog.is_some() {
                     match event.physical_key {
                         PhysicalKey::Code(KeyCode::Escape) => self.close_dialog(),
@@ -1869,6 +1937,14 @@ impl ApplicationHandler<UserEvent> for App {
                 }
                 match event.physical_key {
                     PhysicalKey::Code(KeyCode::Escape) => {
+                        if let Some(c) = &mut self.crop {
+                            if c.bar.editing.is_some() {
+                                c.bar.editing = None;
+                                c.bar_dirty = true;
+                                self.redraw();
+                                return;
+                            }
+                        }
                         if self.crop_active() {
                             self.cancel_crop();
                         } else if self.menu.is_some() {
@@ -1878,10 +1954,47 @@ impl ApplicationHandler<UserEvent> for App {
                         }
                     }
                     PhysicalKey::Code(KeyCode::Enter | KeyCode::NumpadEnter) => {
+                        if let Some(c) = &mut self.crop {
+                            if c.bar.editing.is_some() {
+                                self.commit_crop_field();
+                                return;
+                            }
+                        }
                         if self.crop_active() {
                             self.apply_crop();
                         } else if self.image.is_none() {
                             self.pick_file();
+                        }
+                    }
+                    PhysicalKey::Code(KeyCode::Tab) => {
+                        if let Some(c) = &mut self.crop {
+                            if let Some(field) = c.bar.editing {
+                                self.commit_crop_field();
+                                if let Some(c) = &mut self.crop {
+                                    c.bar.editing = Some(match field {
+                                        CropField::W => CropField::H,
+                                        CropField::H => CropField::W,
+                                    });
+                                    c.bar_dirty = true;
+                                    self.redraw();
+                                }
+                                return;
+                            }
+                        }
+                    }
+                    PhysicalKey::Code(KeyCode::Backspace) => {
+                        if let Some(c) = &mut self.crop {
+                            let buf = match c.bar.editing {
+                                Some(CropField::W) => &mut c.bar.buf_w,
+                                Some(CropField::H) => &mut c.bar.buf_h,
+                                None => &mut String::new(),
+                            };
+                            if !buf.is_empty() {
+                                buf.pop();
+                                c.bar_dirty = true;
+                                self.redraw();
+                                return;
+                            }
                         }
                     }
                     PhysicalKey::Code(KeyCode::Digit0) | PhysicalKey::Code(KeyCode::Numpad0) => {
@@ -2027,10 +2140,41 @@ impl ApplicationHandler<UserEvent> for App {
                             return;
                         }
                         Some(BarAction::Apply) => {
+                            self.commit_crop_field();
                             self.apply_crop();
                             return;
                         }
-                        None => {}
+                        Some(BarAction::EditW) => {
+                            if let Some(c) = &mut self.crop {
+                                let cur_w = (c.rect[2] - c.rect[0]).round() as u32;
+                                c.bar.buf_w = cur_w.to_string();
+                                let cur_h = (c.rect[3] - c.rect[1]).round() as u32;
+                                c.bar.buf_h = cur_h.to_string();
+                                c.bar.editing = Some(CropField::W);
+                                c.bar_dirty = true;
+                                self.redraw();
+                            }
+                            return;
+                        }
+                        Some(BarAction::EditH) => {
+                            if let Some(c) = &mut self.crop {
+                                let cur_w = (c.rect[2] - c.rect[0]).round() as u32;
+                                c.bar.buf_w = cur_w.to_string();
+                                let cur_h = (c.rect[3] - c.rect[1]).round() as u32;
+                                c.bar.buf_h = cur_h.to_string();
+                                c.bar.editing = Some(CropField::H);
+                                c.bar_dirty = true;
+                                self.redraw();
+                            }
+                            return;
+                        }
+                        None => {
+                            if let Some(c) = &mut self.crop {
+                                if c.bar.editing.is_some() {
+                                    self.commit_crop_field();
+                                }
+                            }
+                        }
                     }
                     let on_bar = self.crop.as_ref().is_some_and(|c| {
                         p.0 >= 0.0 && p.1 >= 0.0 && p.0 < c.bar.w as f32 && p.1 < c.bar.h as f32

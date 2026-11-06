@@ -187,6 +187,14 @@ impl Dialog {
 pub enum BarAction {
     Cancel,
     Apply,
+    EditW,
+    EditH,
+}
+
+#[derive(Clone, Copy, PartialEq)]
+pub enum CropField {
+    W,
+    H,
 }
 
 pub struct CropBar {
@@ -196,17 +204,28 @@ pub struct CropBar {
     pub h: i32,
     scale: f32,
     hover: Option<usize>,
+    pub editing: Option<CropField>,
+    pub buf_w: String,
+    pub buf_h: String,
+    rect_w: Rect,
+    rect_h: Rect,
 }
 
 impl CropBar {
     pub fn new(font: &Fonts, scale: f32) -> Self {
         let s = scale;
         let (pad, h, btn_h, gap) = (16.0 * s, 46.0 * s, 30.0 * s, 8.0 * s);
-        let label_w = text_width(font, "00000 × 00000", 13.5 * s);
         let cancel = tr("dialog.cancel");
         let apply = tr("crop.apply");
         let (cw, aw) = (button_width(font, cancel, s), button_width(font, apply, s));
-        let x_cancel = pad + label_w + 18.0 * s;
+        let field_w = 64.0 * s;
+        let field_h = 28.0 * s;
+        let y_field = (h - field_h) / 2.0;
+        let times_w = text_width(font, "×", 13.5 * s);
+        let rect_w = (pad, y_field, field_w, field_h);
+        let x_times = pad + field_w + 8.0 * s;
+        let rect_h = (x_times + times_w + 8.0 * s, y_field, field_w, field_h);
+        let x_cancel = rect_h.0 + field_w + 16.0 * s;
         let x_apply = x_cancel + cw + gap;
         let side = (h - btn_h) / 2.0;
         let w = x_apply + aw + side;
@@ -221,6 +240,11 @@ impl CropBar {
             h: h.round() as i32,
             scale,
             hover: None,
+            editing: None,
+            buf_w: String::new(),
+            buf_h: String::new(),
+            rect_w,
+            rect_h,
         }
     }
 
@@ -243,6 +267,12 @@ impl CropBar {
     }
 
     pub fn action_at(&self, p: (f32, f32)) -> Option<BarAction> {
+        if contains(self.rect_w, p) {
+            return Some(BarAction::EditW);
+        }
+        if contains(self.rect_h, p) {
+            return Some(BarAction::EditH);
+        }
         self.buttons
             .iter()
             .find(|(_, _, r)| contains(*r, p))
@@ -254,10 +284,52 @@ impl CropBar {
         surface(cv, 0.0, 0.0, self.w as f32, self.h as f32, R_PILL * s, s);
 
         let px = 13.5 * s;
+        let dark_box: Rgb = [0x2c, 0x2f, 0x35];
+        let edit_border: Rgb = [0x5f, 0x65, 0x73];
+
+        let val_w = if self.editing == Some(CropField::W) {
+            &self.buf_w
+        } else {
+            self.label.split_once('×').map(|(w, _)| w.trim()).unwrap_or("")
+        };
+        let val_h = if self.editing == Some(CropField::H) {
+            &self.buf_h
+        } else {
+            self.label.split_once('×').map(|(_, h)| h.trim()).unwrap_or("")
+        };
+
+        // Draw Width input box
+        cv.round_rect(self.rect_w.0, self.rect_w.1, self.rect_w.2, self.rect_w.3, R_BTN * s, dark_box);
+        if self.editing == Some(CropField::W) {
+            cv.ring(self.rect_w.0 + self.rect_w.2 / 2.0, self.rect_w.1 + self.rect_w.3 / 2.0, self.rect_w.2 / 2.0, 1.2 * s, ACCENT);
+        } else {
+            cv.round_rect_grad(self.rect_w.0, self.rect_w.1, self.rect_w.2, self.rect_w.3, R_BTN * s, edit_border, edit_border);
+        }
+
+        // Draw Height input box
+        cv.round_rect(self.rect_h.0, self.rect_h.1, self.rect_h.2, self.rect_h.3, R_BTN * s, dark_box);
+        if self.editing == Some(CropField::H) {
+            cv.ring(self.rect_h.0 + self.rect_h.2 / 2.0, self.rect_h.1 + self.rect_h.3 / 2.0, self.rect_h.2 / 2.0, 1.2 * s, ACCENT);
+        } else {
+            cv.round_rect_grad(self.rect_h.0, self.rect_h.1, self.rect_h.2, self.rect_h.3, R_BTN * s, edit_border, edit_border);
+        }
+
         if let Some(lm) = font.horizontal_line_metrics(px) {
             let baseline = self.h as f32 / 2.0 + (lm.ascent + lm.descent) / 2.0;
-            cv.text(font, &self.label, 16.0 * s, baseline, px, TEXT);
+
+            // text for W
+            let tw = text_width(font, val_w, px);
+            cv.text(font, val_w, self.rect_w.0 + (self.rect_w.2 - tw) / 2.0, baseline, px, TEXT);
+
+            // separator "×"
+            let times_x = (self.rect_w.0 + self.rect_w.2 + self.rect_h.0) / 2.0 - text_width(font, "×", px) / 2.0;
+            cv.text(font, "×", times_x, baseline, px, DIM);
+
+            // text for H
+            let th = text_width(font, val_h, px);
+            cv.text(font, val_h, self.rect_h.0 + (self.rect_h.2 - th) / 2.0, baseline, px, TEXT);
         }
+
         for (i, (label, action, r)) in self.buttons.iter().enumerate() {
             let primary = *action == BarAction::Apply;
             draw_button(cv, font, *r, label, primary, self.hover == Some(i), s);
