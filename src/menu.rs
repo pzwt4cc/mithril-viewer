@@ -27,6 +27,7 @@ pub enum Action {
     SetOpacity(u8),
 }
 
+#[derive(Clone)]
 pub enum Entry {
     Item {
         action: Action,
@@ -34,13 +35,20 @@ pub enum Entry {
         hint: &'static str,
         checked: bool,
     },
+    Submenu {
+        label: &'static str,
+        value: String,
+        items: Vec<Entry>,
+    },
+    #[allow(dead_code)]
     Section(&'static str),
     Separator,
 }
 
-fn height(e: &Entry) -> f32 {
-    match e {
+fn height(entry: &Entry) -> f32 {
+    match entry {
         Entry::Item { .. } => ITEM_H,
+        Entry::Submenu { .. } => ITEM_H,
         Entry::Section(_) => SECTION_H,
         Entry::Separator => SEP_H,
     }
@@ -80,48 +88,171 @@ pub fn context_entries(mode: DeleteMode) -> Vec<Entry> {
 const OPACITIES: [(u8, &str); 4] = [(100, "100%"), (85, "85%"), (70, "70%"), (55, "55%")];
 
 pub fn settings_entries(language: Option<&str>, mode: DeleteMode, opacity: u8) -> Vec<Entry> {
-    let mut v = vec![
-        Entry::Section(tr("settings.language")),
-        Entry::Item {
-            action: Action::SetLanguage("auto"),
-            label: tr("settings.auto"),
-            hint: "",
-            checked: language.is_none(),
-        },
-    ];
+    let mut lang_items = vec![Entry::Item {
+        action: Action::SetLanguage("auto"),
+        label: tr("settings.auto"),
+        hint: "",
+        checked: language.is_none(),
+    }];
+    let mut cur_lang = tr("settings.auto");
     for (code, name) in available() {
-        v.push(Entry::Item {
+        let checked = language == Some(code);
+        if checked {
+            cur_lang = name;
+        }
+        lang_items.push(Entry::Item {
             action: Action::SetLanguage(code),
             label: name,
             hint: "",
-            checked: language == Some(code),
+            checked,
         });
     }
-    v.push(Entry::Separator);
-    v.push(Entry::Section(tr("settings.delete")));
-    v.push(Entry::Item {
-        action: Action::SetDeleteMode(DeleteMode::Trash),
-        label: tr("menu.trash"),
-        hint: "",
-        checked: mode == DeleteMode::Trash,
-    });
-    v.push(Entry::Item {
-        action: Action::SetDeleteMode(DeleteMode::Permanent),
-        label: tr("menu.delete_permanent"),
-        hint: "",
-        checked: mode == DeleteMode::Permanent,
-    });
-    v.push(Entry::Separator);
-    v.push(Entry::Section(tr("settings.opacity")));
-    for (value, label) in OPACITIES {
-        v.push(Entry::Item {
-            action: Action::SetOpacity(value),
+
+    let del_trash = tr("menu.trash");
+    let del_perm = tr("menu.delete_permanent");
+    let cur_del = if mode == DeleteMode::Trash {
+        del_trash
+    } else {
+        del_perm
+    };
+    let del_items = vec![
+        Entry::Item {
+            action: Action::SetDeleteMode(DeleteMode::Trash),
+            label: del_trash,
+            hint: "",
+            checked: mode == DeleteMode::Trash,
+        },
+        Entry::Item {
+            action: Action::SetDeleteMode(DeleteMode::Permanent),
+            label: del_perm,
+            hint: "",
+            checked: mode == DeleteMode::Permanent,
+        },
+    ];
+
+    let mut op_items = Vec::new();
+    for (val, label) in OPACITIES {
+        op_items.push(Entry::Item {
+            action: Action::SetOpacity(val),
             label,
             hint: "",
-            checked: opacity == value,
+            checked: opacity == val,
         });
     }
-    v
+
+    vec![
+        Entry::Submenu {
+            label: tr("settings.language"),
+            value: cur_lang.to_string(),
+            items: lang_items,
+        },
+        Entry::Separator,
+        Entry::Submenu {
+            label: tr("settings.delete"),
+            value: cur_del.to_string(),
+            items: del_items,
+        },
+        Entry::Separator,
+        Entry::Submenu {
+            label: tr("settings.opacity"),
+            value: format!("{opacity}%"),
+            items: op_items,
+        },
+    ]
+}
+
+#[derive(Clone)]
+pub struct SubmenuState {
+    pub parent_index: usize,
+    pub x: i32,
+    pub y: i32,
+    pub w: i32,
+    pub h: i32,
+    pub entries: Vec<Entry>,
+    tops: Vec<f32>,
+    fades: Vec<Fade>,
+    pub hover: Option<usize>,
+}
+
+impl SubmenuState {
+    pub fn new(
+        parent_index: usize,
+        entries: Vec<Entry>,
+        parent_x: i32,
+        item_y: i32,
+        win: (u32, u32),
+        scale: f32,
+        font: &Fonts,
+    ) -> Self {
+        let mut tops = Vec::with_capacity(entries.len());
+        let mut y = MENU_PAD;
+        for e in &entries {
+            tops.push(y);
+            y += height(e);
+        }
+        let px = 14.0 * scale;
+        let max_tw = entries
+            .iter()
+            .map(|e| match e {
+                Entry::Item { label, .. } => text_width(font, label, px),
+                _ => 0.0,
+            })
+            .fold(0.0, f32::max);
+        let w = (max_tw + 60.0 * scale).max(140.0 * scale).round() as i32;
+        let h = ((y + MENU_PAD) * scale).round() as i32;
+        let gap = (4.0 * scale).round() as i32;
+        let parent_w = (MENU_W * scale).round() as i32;
+        let x = if parent_x + parent_w + w + gap <= win.0 as i32 {
+            if parent_x > (win.0 as i32 / 2) && parent_x - w - gap >= 0 {
+                parent_x - w - gap
+            } else {
+                parent_x + parent_w + gap
+            }
+        } else if parent_x - w - gap >= 0 {
+            parent_x - w - gap
+        } else {
+            (parent_x + parent_w + gap).min(win.0 as i32 - w).max(0)
+        };
+        let x = x.clamp(0, (win.0 as i32 - w).max(0));
+        let y = (item_y - (MENU_PAD * scale).round() as i32)
+            .min(win.1 as i32 - h)
+            .max(0);
+        let fades = vec![Fade::new(0.0); entries.len()];
+        Self {
+            parent_index,
+            x,
+            y,
+            w,
+            h,
+            entries,
+            tops,
+            fades,
+            hover: None,
+        }
+    }
+
+    pub fn item_at(&self, p: (f64, f64), scale: f32) -> Option<usize> {
+        let (px, py) = (p.0 - self.x as f64, p.1 - self.y as f64);
+        if px < 0.0 || px >= self.w as f64 || py < 0.0 || py >= self.h as f64 {
+            return None;
+        }
+        let rel = (py / scale as f64) as f32;
+        for (i, e) in self.entries.iter().enumerate() {
+            let top = self.tops[i];
+            if rel >= top && rel < top + height(e) {
+                return matches!(e, Entry::Item { .. }).then_some(i);
+            }
+        }
+        None
+    }
+
+    pub fn action_under(&self, p: (f64, f64), scale: f32) -> Option<Action> {
+        let i = self.item_at(p, scale)?;
+        match self.entries.get(i)? {
+            Entry::Item { action, .. } => Some(*action),
+            _ => None,
+        }
+    }
 }
 
 pub struct Menu {
@@ -131,10 +262,12 @@ pub struct Menu {
     pub h: i32,
     pub hover: Option<usize>,
     pub appear: Fade,
-    entries: Vec<Entry>,
+    pub entries: Vec<Entry>,
     tops: Vec<f32>,
     fades: Vec<Fade>,
     scale: f32,
+    win: (u32, u32),
+    pub submenu: Option<SubmenuState>,
 }
 
 impl Menu {
@@ -168,11 +301,48 @@ impl Menu {
             tops,
             fades,
             scale,
+            win,
+            submenu: None,
         }
     }
 
     pub fn pad(&self) -> i32 {
         (SHADOW_PAD * self.scale).round() as i32
+    }
+
+    pub fn bounds(&self) -> (i32, i32, i32, i32) {
+        let pad = self.pad();
+        let mut min_x = self.x - pad;
+        let mut min_y = self.y - pad;
+        let mut max_x = self.x + self.w + pad;
+        let mut max_y = self.y + self.h + pad;
+        if let Some(sub) = &self.submenu {
+            min_x = min_x.min(sub.x - pad);
+            min_y = min_y.min(sub.y - pad);
+            max_x = max_x.max(sub.x + sub.w + pad);
+            max_y = max_y.max(sub.y + sub.h + pad);
+        }
+        (min_x, min_y, max_x - min_x, max_y - min_y)
+    }
+
+    pub fn contains(&self, p: (f64, f64)) -> bool {
+        let inside_parent = p.0 >= self.x as f64
+            && p.0 < (self.x + self.w) as f64
+            && p.1 >= self.y as f64
+            && p.1 < (self.y + self.h) as f64;
+        if inside_parent {
+            return true;
+        }
+        if let Some(sub) = &self.submenu {
+            let inside_sub = p.0 >= sub.x as f64
+                && p.0 < (sub.x + sub.w) as f64
+                && p.1 >= sub.y as f64
+                && p.1 < (sub.y + sub.h) as f64;
+            if inside_sub {
+                return true;
+            }
+        }
+        false
     }
 
     pub fn set_hover(&mut self, item: Option<usize>) {
@@ -182,10 +352,71 @@ impl Menu {
         }
     }
 
+    pub fn update_cursor(&mut self, p: (f64, f64), font: &Fonts) -> bool {
+        let mut changed = false;
+
+        // 1. If cursor is inside submenu:
+        if let Some(sub) = &mut self.submenu {
+            let inside_sub = p.0 >= sub.x as f64
+                && p.0 < (sub.x + sub.w) as f64
+                && p.1 >= sub.y as f64
+                && p.1 < (sub.y + sub.h) as f64;
+            if inside_sub {
+                let new_sub_hover = sub.item_at(p, self.scale);
+                if new_sub_hover != sub.hover {
+                    sub.hover = new_sub_hover;
+                    for (i, f) in sub.fades.iter_mut().enumerate() {
+                        f.to = if new_sub_hover == Some(i) { 1.0 } else { 0.0 };
+                    }
+                    changed = true;
+                }
+                return changed;
+            } else if sub.hover.is_some() {
+                sub.hover = None;
+                for f in sub.fades.iter_mut() {
+                    f.to = 0.0;
+                }
+                changed = true;
+            }
+        }
+
+        // 2. Cursor inside parent menu:
+        let item = self.item_at(p);
+        if let Some(idx) = item {
+            if self.hover != Some(idx) {
+                self.set_hover(Some(idx));
+                changed = true;
+                if let Entry::Submenu { items, .. } = &self.entries[idx] {
+                    let item_y = self.y + (self.tops[idx] * self.scale).round() as i32;
+                    self.submenu = Some(SubmenuState::new(
+                        idx,
+                        items.clone(),
+                        self.x,
+                        item_y,
+                        self.win,
+                        self.scale,
+                        font,
+                    ));
+                } else {
+                    self.submenu = None;
+                }
+            }
+        } else if self.submenu.is_none() && self.hover.is_some() {
+            self.set_hover(None);
+            changed = true;
+        }
+        changed
+    }
+
     pub fn step(&mut self, dt: f32) -> bool {
         let mut moved = self.appear.step(dt, 20.0);
         for f in self.fades.iter_mut() {
             moved |= f.step(dt, 24.0);
+        }
+        if let Some(sub) = &mut self.submenu {
+            for f in sub.fades.iter_mut() {
+                moved |= f.step(dt, 24.0);
+            }
         }
         moved
     }
@@ -199,13 +430,21 @@ impl Menu {
         for (i, e) in self.entries.iter().enumerate() {
             let top = self.tops[i];
             if rel >= top && rel < top + height(e) {
-                return matches!(e, Entry::Item { .. }).then_some(i);
+                return match e {
+                    Entry::Item { .. } | Entry::Submenu { .. } => Some(i),
+                    _ => None,
+                };
             }
         }
         None
     }
 
     pub fn action_under(&self, p: (f64, f64)) -> Option<Action> {
+        if let Some(sub) = &self.submenu {
+            if let Some(act) = sub.action_under(p, self.scale) {
+                return Some(act);
+            }
+        }
         let i = self.item_at(p)?;
         match self.entries.get(i)? {
             Entry::Item { action, .. } => Some(*action),
@@ -215,6 +454,8 @@ impl Menu {
 
     pub fn draw(&self, cv: &mut Canvas, font: &Fonts) {
         let s = self.scale;
+
+        // Draw parent menu surface
         let (mx, my, mw, mh) = (self.x as f32, self.y as f32, self.w as f32, self.h as f32);
         surface(cv, mx, my, mw, mh, R_MENU * s, s);
 
@@ -282,7 +523,110 @@ impl Menu {
                         cv.text(font, hint, ix + iw - 10.0 * s - hw, baseline, px, DIM);
                     }
                 }
+                Entry::Submenu { label, value, .. } => {
+                    let ih = ITEM_H * s;
+                    let is_active_sub = self
+                        .submenu
+                        .as_ref()
+                        .is_some_and(|sub| sub.parent_index == i);
+                    let f = self.fades[i].v.max(if is_active_sub { 1.0 } else { 0.0 });
+                    if f > 0.01 {
+                        cv.round_rect_alpha(ix, iy, iw, ih, R_ITEM * s, HOVER, f);
+                    }
+                    let baseline = iy + ih / 2.0 + (lm.ascent + lm.descent) / 2.0;
+                    cv.text(font, label, ix + 10.0 * s, baseline, px, TEXT);
+
+                    // Chevron ›
+                    let ch_x = ix + iw - 12.0 * s;
+                    let ch_y = iy + ih / 2.0;
+                    let ch_c = if f > 0.3 { TEXT } else { DIM };
+                    cv.line(ch_x - 3.5 * s, ch_y - 4.0 * s, ch_x, ch_y, 1.5 * s, ch_c);
+                    cv.line(ch_x - 3.5 * s, ch_y + 4.0 * s, ch_x, ch_y, 1.5 * s, ch_c);
+
+                    // Value text
+                    let vw = text_width(font, value, px);
+                    cv.text(font, value, ch_x - 10.0 * s - vw, baseline, px, DIM);
+                }
             }
         }
+
+        // Draw Submenu if open
+        if let Some(sub) = &self.submenu {
+            let (sx, sy, sw, sh) = (sub.x as f32, sub.y as f32, sub.w as f32, sub.h as f32);
+            surface(cv, sx, sy, sw, sh, R_MENU * s, s);
+
+            let six = sx + MENU_PAD * s;
+            let siw = sw - 2.0 * MENU_PAD * s;
+            for (i, e) in sub.entries.iter().enumerate() {
+                let siy = sy + sub.tops[i] * s;
+                if let Entry::Item { label, checked, .. } = e {
+                    let ih = ITEM_H * s;
+                    let f = sub.fades[i].v;
+                    if f > 0.01 {
+                        cv.round_rect_alpha(six, siy, siw, ih, R_ITEM * s, HOVER, f);
+                    }
+                    let baseline = siy + ih / 2.0 + (lm.ascent + lm.descent) / 2.0;
+                    if *checked {
+                        let (x0, y0) = (six + 10.0 * s, siy + ih / 2.0);
+                        cv.line(x0, y0, x0 + 3.5 * s, y0 + 3.5 * s, 1.8 * s, acc);
+                        cv.line(
+                            x0 + 3.5 * s,
+                            y0 + 3.5 * s,
+                            x0 + 10.0 * s,
+                            y0 - 3.5 * s,
+                            1.8 * s,
+                            acc,
+                        );
+                    }
+                    cv.text(font, label, six + 26.0 * s, baseline, px, TEXT);
+                }
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use fontdue::{Font, FontSettings};
+
+    fn test_fonts() -> Fonts {
+        Fonts::new(
+            Font::from_bytes(
+                include_bytes!("../assets/InterVariable.ttf") as &[u8],
+                FontSettings::default(),
+            )
+            .unwrap(),
+        )
+    }
+
+    #[test]
+    fn test_settings_submenus() {
+        let fonts = test_fonts();
+        let entries = settings_entries(None, DeleteMode::Trash, 100);
+        assert_eq!(entries.len(), 5);
+
+        let mut menu = Menu::new(entries, (400, 100), (800, 600), 1.0, true);
+        let (_bx1, _by1, bw1, bh1) = menu.bounds();
+        assert!(bw1 > 0 && bh1 > 0);
+        assert!(menu.submenu.is_none());
+
+        // Hover over first entry (Language submenu)
+        let inside_first = (menu.x as f64 + 10.0, menu.y as f64 + 10.0);
+        assert!(menu.update_cursor(inside_first, &fonts));
+        assert!(menu.submenu.is_some());
+
+        // Bounds should now expand to include the submenu
+        let (_bx2, _by2, bw2, _bh2) = menu.bounds();
+        assert!(bw2 > bw1);
+
+        // Point inside submenu should return true for contains
+        let sub = menu.submenu.as_ref().unwrap();
+        let sub_point = (sub.x as f64 + 10.0, sub.y as f64 + 10.0);
+        assert!(menu.contains(sub_point));
+
+        // Submenu item action
+        let act = menu.action_under(sub_point);
+        assert!(matches!(act, Some(Action::SetLanguage(_))));
     }
 }

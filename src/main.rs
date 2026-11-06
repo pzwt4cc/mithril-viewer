@@ -599,7 +599,7 @@ impl App {
         let entries = menu::context_entries(self.config.delete_mode);
         let anchor = (self.cursor.0 as i32, self.cursor.1 as i32);
         let mut menu = Menu::new(entries, anchor, lay.win, lay.scale, false);
-        menu.set_hover(menu.item_at(self.cursor));
+        menu.update_cursor(self.cursor, &self.font);
         self.menu = Some(menu);
         self.menu_dirty = true;
         self.redraw();
@@ -615,7 +615,7 @@ impl App {
         let (cx, cy, cw, ch) = lay.capsule();
         let anchor = ((cx + cw) as i32, (cy + ch + 6.0 * lay.scale) as i32);
         let mut menu = Menu::new(entries, anchor, lay.win, lay.scale, true);
-        menu.set_hover(menu.item_at(self.cursor));
+        menu.update_cursor(self.cursor, &self.font);
         self.menu = Some(menu);
         self.settings_open = true;
         self.menu_dirty = true;
@@ -1480,16 +1480,16 @@ impl App {
         if self.menu_dirty {
             self.menu_dirty = false;
             if let Some(menu) = &self.menu {
-                let pad = menu.pad();
-                let (mw, mh) = ((menu.w + 2 * pad) as u32, (menu.h + 2 * pad) as u32);
+                let (bx, by, bw, bh) = menu.bounds();
+                let (mw, mh) = (bw as u32, bh as u32);
                 let mut mb = vec![0u32; (mw * mh) as usize];
                 menu.draw(
                     &mut Canvas {
                         px: &mut mb,
                         w: mw,
                         h: mh,
-                        ox: menu.x - pad,
-                        oy: menu.y - pad,
+                        ox: bx,
+                        oy: by,
                     },
                     &self.font,
                 );
@@ -1761,9 +1761,9 @@ impl App {
             }
         }
         if let Some(menu) = &self.menu {
+            let (bx, by, ..) = menu.bounds();
             let lift = ((1.0 - menu.appear.v) * 6.0 * lay.scale) as i32;
-            let mp = menu.pad();
-            gpu.draw_overlay(gpu::MENU, menu.x - mp, menu.y - mp + lift, menu.appear.v);
+            gpu.draw_overlay(gpu::MENU, bx, by + lift, menu.appear.v);
         }
         if let Some(t) = &self.toast {
             if let Some((bw, bh)) = gpu.overlay_size(gpu::TOAST) {
@@ -2118,12 +2118,20 @@ impl ApplicationHandler<UserEvent> for App {
                     }
                     return;
                 }
-                if self.menu.is_some() {
-                    let action = self.menu.as_ref().and_then(|m| m.action_under(self.cursor));
-                    self.close_menu();
-                    if let Some(a) = action {
+                if let Some(menu) = &mut self.menu {
+                    if let Some(a) = menu.action_under(self.cursor) {
+                        self.close_menu();
                         self.apply(a);
+                        return;
                     }
+                    if menu.contains(self.cursor) {
+                        if menu.update_cursor(self.cursor, &self.font) {
+                            self.menu_dirty = true;
+                            self.redraw();
+                        }
+                        return;
+                    }
+                    self.close_menu();
                     return;
                 }
                 let (Some(window), Some(lay)) = (self.window.clone(), self.layout()) else {
@@ -2230,9 +2238,8 @@ impl ApplicationHandler<UserEvent> for App {
                 self.update_modal_hover();
 
                 if let Some(menu) = &mut self.menu {
-                    let item = menu.item_at(new);
-                    if item != menu.hover {
-                        menu.set_hover(item);
+                    if menu.update_cursor(new, &self.font) {
+                        self.menu_dirty = true;
                         self.redraw();
                     }
                 }
