@@ -1,8 +1,4 @@
-use std::{
-    env, fs,
-    path::PathBuf,
-    sync::atomic::{AtomicU32, Ordering},
-};
+use std::{env, fs, path::PathBuf};
 
 #[derive(Clone, Copy, PartialEq)]
 pub enum DeleteMode {
@@ -10,69 +6,10 @@ pub enum DeleteMode {
     Permanent,
 }
 
-#[derive(Clone, Copy, PartialEq)]
-pub enum Accent {
-    Blue,
-    Green,
-    Purple,
-    Orange,
-    Gray,
-}
-
-impl Accent {
-    pub const ALL: [Accent; 5] = [
-        Accent::Blue,
-        Accent::Green,
-        Accent::Purple,
-        Accent::Orange,
-        Accent::Gray,
-    ];
-
-    pub fn rgb(self) -> [u8; 3] {
-        match self {
-            Accent::Blue => [0x8a, 0xa8, 0xff],
-            Accent::Green => [0x9c, 0xc4, 0x8a],
-            Accent::Purple => [0xb8, 0x9d, 0xf2],
-            Accent::Orange => [0xee, 0xa8, 0x70],
-            Accent::Gray => [0xc3, 0xc7, 0xcf],
-        }
-    }
-
-    pub fn key(self) -> &'static str {
-        match self {
-            Accent::Blue => "blue",
-            Accent::Green => "green",
-            Accent::Purple => "purple",
-            Accent::Orange => "orange",
-            Accent::Gray => "gray",
-        }
-    }
-
-    fn parse(s: &str) -> Option<Accent> {
-        Accent::ALL
-            .into_iter()
-            .find(|a| a.key().eq_ignore_ascii_case(s))
-    }
-}
-
-static ACCENT: AtomicU32 = AtomicU32::new(0x8aa8ff);
-
-pub fn set_accent(a: Accent) {
-    let c = a.rgb();
-    let v = (c[0] as u32) << 16 | (c[1] as u32) << 8 | c[2] as u32;
-    ACCENT.store(v, Ordering::Relaxed);
-}
-
-pub fn accent() -> [u8; 3] {
-    let v = ACCENT.load(Ordering::Relaxed);
-    [(v >> 16) as u8, (v >> 8) as u8, v as u8]
-}
-
 pub struct Config {
     pub delete_mode: DeleteMode,
     pub language: Option<String>,
     pub opacity: u8,
-    pub accent: Accent,
 }
 
 impl Default for Config {
@@ -81,7 +18,6 @@ impl Default for Config {
             delete_mode: DeleteMode::Trash,
             language: None,
             opacity: 100,
-            accent: Accent::Blue,
         }
     }
 }
@@ -129,11 +65,6 @@ pub fn load() -> Config {
                     cfg.opacity = p.clamp(40, 100);
                 }
             }
-            "accent" => {
-                if let Some(a) = Accent::parse(v) {
-                    cfg.accent = a;
-                }
-            }
             _ => {}
         }
     }
@@ -154,9 +85,8 @@ pub fn save(cfg: &Config) {
     if fs::write(
         &tmp,
         format!(
-            "delete_mode = {mode}\nlanguage = {lang}\nopacity = {}\naccent = {}\n",
-            cfg.opacity,
-            cfg.accent.key()
+            "delete_mode = {mode}\nlanguage = {lang}\nopacity = {}\n",
+            cfg.opacity
         ),
     )
     .is_ok()

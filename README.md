@@ -29,7 +29,7 @@ English · [Русский](README.ru.md)
 - **Print** through CUPS
 - **Delete** to trash or permanently (with confirmation)
 - **Drag & drop** a file into the window
-- **Customizable:** language (English / Русский), accent color, window opacity
+- **Customizable:** language (English / Русский), window opacity
 - **Native feel:** frameless rounded window with GPU rendering (OpenGL ES 3.0), works on Wayland and X11
 
 ## Installation

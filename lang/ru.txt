@@ -41,7 +41,6 @@ toast.save_failed = Не удалось сохранить
 toast.crop_gif = Нельзя обрезать анимированный GIF
 toast.open_failed = Не удалось открыть
 settings.opacity = Прозрачность окна
-settings.accent = Цвет акцента
 empty.title = Откройте изображение
 empty.button = Открыть изображение…
 empty.hint = или нажмите Ctrl+O

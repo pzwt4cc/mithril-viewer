@@ -29,7 +29,7 @@ use winit::{
 };
 
 use anim::Anim;
-use config::{Config, DeleteMode, accent};
+use config::{Config, DeleteMode};
 use draw::{Canvas, Rgb, ellipsize, lerp, text_width};
 use fonts::Fonts;
 use gpu::Gpu;
@@ -58,6 +58,7 @@ const BORDER: Rgb = [0x4b, 0x4f, 0x57];
 const HOVER: Rgb = [0x4a, 0x4e, 0x57];
 const ACTIVE: Rgb = [0x56, 0x5e, 0x73];
 const TEXT: Rgb = [0xee, 0xef, 0xf2];
+const ACCENT: Rgb = [0xff, 0xff, 0xff];
 const DIM: Rgb = [0xa3, 0xa8, 0xb1];
 const DANGER: Rgb = [0xd9, 0x4f, 0x4f];
 
@@ -1176,7 +1177,6 @@ impl App {
             self.config.language.as_deref(),
             self.config.delete_mode,
             self.config.opacity,
-            self.config.accent,
         );
         let (cx, cy, cw, ch) = lay.capsule();
         let anchor = ((cx + cw) as i32, (cy + ch + 6.0 * lay.scale) as i32);
@@ -1226,17 +1226,6 @@ impl App {
             Action::Copy => self.copy_image(),
             Action::Delete => self.request_delete(),
             Action::SetLanguage(code) => self.set_language(code),
-            Action::SetAccent(a) => {
-                self.config.accent = a;
-                config::set_accent(a);
-                config::save(&self.config);
-                self.header_dirty = true;
-                self.sidebar_dirty = true;
-                if let Some(c) = &mut self.crop {
-                    c.bar_dirty = true;
-                }
-                self.redraw();
-            }
             Action::SetOpacity(p) => {
                 self.config.opacity = p;
                 config::save(&self.config);
@@ -1803,7 +1792,7 @@ impl App {
 
             let (gx, gy) = (x + pad, y + h / 2.0);
             let dark: Rgb = [0x2b, 0x2d, 0x31];
-            cv.round_rect(gx, gy - 7.0 * s, icon_w, 14.0 * s, 3.5 * s, accent());
+            cv.round_rect(gx, gy - 7.0 * s, icon_w, 14.0 * s, 3.5 * s, ACCENT);
             cv.line(
                 gx + 2.5 * s,
                 gy + 4.2 * s,
@@ -1885,7 +1874,7 @@ impl App {
             lerp(HOVER, ACTIVE, self.side.v),
             hv.max(self.side.v),
         );
-        let ic = lerp(TEXT, accent(), self.side.v);
+        let ic = lerp(TEXT, ACCENT, self.side.v);
         cv.ring(ix, iy, 6.5 * s, 1.6 * s, ic);
         cv.circle(ix, iy - 3.0 * s, 1.0 * s, ic);
         cv.line(ix, iy - 0.6 * s, ix, iy + 3.2 * s, 1.6 * s, ic);
@@ -1927,7 +1916,7 @@ impl App {
             let (rx, ry, rw, rh) = lay.ratio_row(i);
             let active = c.preset == i;
             if active {
-                cv.round_rect(rx, ry, rw, rh, R_ITEM * s, accent());
+                cv.round_rect(rx, ry, rw, rh, R_ITEM * s, ACCENT);
             } else if self.ratio_hover == Some(i) {
                 cv.round_rect(rx, ry, rw, rh, R_ITEM * s, HOVER);
             }
@@ -1967,7 +1956,7 @@ impl App {
 
         let (bx, by, bw, bh) = lay.start_btn();
         let hv = self.fades[Hit::Start.index()].v;
-        let fill = lerp(accent(), [255, 255, 255], 0.18 * hv);
+        let fill = lerp(ACCENT, [255, 255, 255], 0.18 * hv);
         cv.round_rect(bx, by, bw, bh, 12.0 * s, fill);
         let dark: Rgb = [0x2b, 0x2d, 0x31];
         line(&mut *cv, tr("empty.button"), by, bh, 15.0 * s, dark);
@@ -2484,7 +2473,7 @@ impl ApplicationHandler<UserEvent> for App {
                 self.gpu = Some(gpu);
             }
             Err(e) => {
-                eprintln!("mithril: не удалось запустить OpenGL: {e}");
+                eprintln!("mithril: failed to launch OpenGL: {e}");
                 el.exit();
             }
         }
@@ -2798,11 +2787,10 @@ fn main() {
             &include_bytes!("../assets/InterVariable.ttf")[..],
             FontSettings::default(),
         )
-        .expect("не удалось загрузить шрифт"),
+        .expect("failed to load font"),
     );
 
     let config = config::load();
-    config::set_accent(config.accent);
     i18n::init(config.language.as_deref());
 
     let event_loop = EventLoop::<UserEvent>::with_user_event().build().unwrap();
