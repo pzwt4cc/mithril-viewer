@@ -2101,7 +2101,10 @@ impl ApplicationHandler<UserEvent> for App {
                 if !state.is_pressed() {
                     self.dragging = false;
                     if let Some(c) = &mut self.crop {
-                        c.drag = None;
+                        if c.drag.is_some() {
+                            c.drag = None;
+                            self.redraw();
+                        }
                     }
                     return;
                 }
@@ -2235,6 +2238,15 @@ impl ApplicationHandler<UserEvent> for App {
                 }
 
                 self.update_pointer();
+            }
+            WindowEvent::CursorLeft { .. } | WindowEvent::Focused(false) => {
+                self.dragging = false;
+                if let Some(c) = &mut self.crop {
+                    if c.drag.is_some() {
+                        c.drag = None;
+                        self.redraw();
+                    }
+                }
             }
             WindowEvent::DroppedFile(path) => self.open_external(path),
             WindowEvent::RedrawRequested => self.render(),

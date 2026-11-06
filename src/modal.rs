@@ -298,20 +298,25 @@ impl CropBar {
             self.label.split_once('×').map(|(_, h)| h.trim()).unwrap_or("")
         };
 
+        let r = R_BTN * s;
         // Draw Width input box
-        cv.round_rect(self.rect_w.0, self.rect_w.1, self.rect_w.2, self.rect_w.3, R_BTN * s, dark_box);
+        let (wx, wy, ww, wh) = self.rect_w;
         if self.editing == Some(CropField::W) {
-            cv.ring(self.rect_w.0 + self.rect_w.2 / 2.0, self.rect_w.1 + self.rect_w.3 / 2.0, self.rect_w.2 / 2.0, 1.2 * s, ACCENT);
+            cv.round_rect(wx - 1.0 * s, wy - 1.0 * s, ww + 2.0 * s, wh + 2.0 * s, r + 1.0 * s, ACCENT);
+            cv.round_rect(wx, wy, ww, wh, r, dark_box);
         } else {
-            cv.round_rect_grad(self.rect_w.0, self.rect_w.1, self.rect_w.2, self.rect_w.3, R_BTN * s, edit_border, edit_border);
+            cv.round_rect(wx, wy, ww, wh, r, edit_border);
+            cv.round_rect(wx + 1.0 * s, wy + 1.0 * s, ww - 2.0 * s, wh - 2.0 * s, r - 1.0 * s, dark_box);
         }
 
         // Draw Height input box
-        cv.round_rect(self.rect_h.0, self.rect_h.1, self.rect_h.2, self.rect_h.3, R_BTN * s, dark_box);
+        let (hx, hy, hw, hh) = self.rect_h;
         if self.editing == Some(CropField::H) {
-            cv.ring(self.rect_h.0 + self.rect_h.2 / 2.0, self.rect_h.1 + self.rect_h.3 / 2.0, self.rect_h.2 / 2.0, 1.2 * s, ACCENT);
+            cv.round_rect(hx - 1.0 * s, hy - 1.0 * s, hw + 2.0 * s, hh + 2.0 * s, r + 1.0 * s, ACCENT);
+            cv.round_rect(hx, hy, hw, hh, r, dark_box);
         } else {
-            cv.round_rect_grad(self.rect_h.0, self.rect_h.1, self.rect_h.2, self.rect_h.3, R_BTN * s, edit_border, edit_border);
+            cv.round_rect(hx, hy, hw, hh, r, edit_border);
+            cv.round_rect(hx + 1.0 * s, hy + 1.0 * s, hw - 2.0 * s, hh - 2.0 * s, r - 1.0 * s, dark_box);
         }
 
         if let Some(lm) = font.horizontal_line_metrics(px) {
