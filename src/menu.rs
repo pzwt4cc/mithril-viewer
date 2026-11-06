@@ -7,7 +7,7 @@ use crate::{
     surface,
 };
 
-const MENU_W: f32 = 250.0;
+const MENU_W: f32 = 296.0;
 const ITEM_H: f32 = 34.0;
 const SECTION_H: f32 = 30.0;
 const SEP_H: f32 = 9.0;
@@ -175,11 +175,13 @@ pub struct SubmenuState {
 }
 
 impl SubmenuState {
-    pub fn new(
+    pub fn new_dropdown(
         parent_index: usize,
         entries: Vec<Entry>,
         parent_x: i32,
         item_y: i32,
+        button_x: i32,
+        button_w: i32,
         win: (u32, u32),
         scale: f32,
         font: &Fonts,
@@ -198,25 +200,23 @@ impl SubmenuState {
                 _ => 0.0,
             })
             .fold(0.0, f32::max);
-        let w = (max_tw + 60.0 * scale).max(140.0 * scale).round() as i32;
+        let w = (max_tw + 52.0 * scale).max(button_w as f32).max(130.0 * scale).round() as i32;
         let h = ((y + MENU_PAD) * scale).round() as i32;
         let gap = (4.0 * scale).round() as i32;
-        let parent_w = (MENU_W * scale).round() as i32;
-        let x = if parent_x + parent_w + w + gap <= win.0 as i32 {
-            if parent_x > (win.0 as i32 / 2) && parent_x - w - gap >= 0 {
-                parent_x - w - gap
-            } else {
-                parent_x + parent_w + gap
-            }
-        } else if parent_x - w - gap >= 0 {
-            parent_x - w - gap
-        } else {
-            (parent_x + parent_w + gap).min(win.0 as i32 - w).max(0)
-        };
+
+        let right_x = button_x + button_w;
+        let mut x = right_x - w;
+        if x < parent_x {
+            x = parent_x;
+        }
         let x = x.clamp(0, (win.0 as i32 - w).max(0));
-        let y = (item_y - (MENU_PAD * scale).round() as i32)
-            .min(win.1 as i32 - h)
-            .max(0);
+
+        let mut y = item_y + (ITEM_H * scale).round() as i32 + gap;
+        if y + h > win.1 as i32 - 10 {
+            y = item_y - h - gap;
+        }
+        let y = y.clamp(0, (win.1 as i32 - h).max(0));
+
         let fades = vec![Fade::new(0.0); entries.len()];
         Self {
             parent_index,
@@ -352,10 +352,83 @@ impl Menu {
         }
     }
 
-    pub fn update_cursor(&mut self, p: (f64, f64), font: &Fonts) -> bool {
+    pub fn dropdown_button_geometry(&self, idx: usize, font: &Fonts) -> Option<(i32, i32, i32, i32)> {
+        let entry = self.entries.get(idx)?;
+        if let Entry::Submenu { value, .. } = entry {
+            let s = self.scale;
+            let px = 14.0 * s;
+            let vw = text_width(font, value, px);
+            let btn_pad = 8.0 * s;
+            let chev_w = 10.0 * s;
+            let btn_w = (vw + chev_w + btn_pad * 2.0 + 4.0 * s).max(72.0 * s);
+            let btn_h = 24.0 * s;
+            let ix = self.x as f32 + MENU_PAD * s;
+            let iw = self.w as f32 - 2.0 * MENU_PAD * s;
+            let btn_x = ix + iw - btn_w - 4.0 * s;
+            let iy = self.y as f32 + self.tops[idx] * s;
+            let ih = ITEM_H * s;
+            let btn_y = iy + (ih - btn_h) / 2.0;
+            Some((
+                btn_x.round() as i32,
+                btn_y.round() as i32,
+                btn_w.round() as i32,
+                btn_h.round() as i32,
+            ))
+        } else {
+            None
+        }
+    }
+
+    pub fn handle_click(&mut self, p: (f64, f64), font: &Fonts) -> bool {
+        // If click is inside open dropdown list, let item action handle it
+        if let Some(sub) = &self.submenu {
+            let inside_sub = p.0 >= sub.x as f64
+                && p.0 < (sub.x + sub.w) as f64
+                && p.1 >= sub.y as f64
+                && p.1 < (sub.y + sub.h) as f64;
+            if inside_sub {
+                return false;
+            }
+        }
+
+        // If clicked on an item in parent menu:
+        if let Some(idx) = self.item_at(p) {
+            if let Entry::Submenu { items, .. } = &self.entries[idx] {
+                // If this dropdown is already open, toggle it closed
+                if self.submenu.as_ref().is_some_and(|sub| sub.parent_index == idx) {
+                    self.submenu = None;
+                    return true;
+                }
+                // Otherwise open this dropdown
+                let item_y = self.y + (self.tops[idx] * self.scale).round() as i32;
+                let (btn_x, _btn_y, btn_w, _btn_h) = self
+                    .dropdown_button_geometry(idx, font)
+                    .unwrap_or((self.x + self.w - 80, item_y, 80, 24));
+                self.submenu = Some(SubmenuState::new_dropdown(
+                    idx,
+                    items.clone(),
+                    self.x,
+                    item_y,
+                    btn_x,
+                    btn_w,
+                    self.win,
+                    self.scale,
+                    font,
+                ));
+                return true;
+            }
+        } else if self.submenu.is_some() {
+            // Clicked outside parent items, close dropdown
+            self.submenu = None;
+            return true;
+        }
+        false
+    }
+
+    pub fn update_cursor(&mut self, p: (f64, f64), _font: &Fonts) -> bool {
         let mut changed = false;
 
-        // 1. If cursor is inside submenu:
+        // 1. If cursor is inside dropdown list:
         if let Some(sub) = &mut self.submenu {
             let inside_sub = p.0 >= sub.x as f64
                 && p.0 < (sub.x + sub.w) as f64
@@ -370,6 +443,10 @@ impl Menu {
                     }
                     changed = true;
                 }
+                if self.hover.is_some() {
+                    self.set_hover(None);
+                    changed = true;
+                }
                 return changed;
             } else if sub.hover.is_some() {
                 sub.hover = None;
@@ -382,29 +459,11 @@ impl Menu {
 
         // 2. Cursor inside parent menu:
         let item = self.item_at(p);
-        if let Some(idx) = item {
-            if self.hover != Some(idx) {
-                self.set_hover(Some(idx));
-                changed = true;
-                if let Entry::Submenu { items, .. } = &self.entries[idx] {
-                    let item_y = self.y + (self.tops[idx] * self.scale).round() as i32;
-                    self.submenu = Some(SubmenuState::new(
-                        idx,
-                        items.clone(),
-                        self.x,
-                        item_y,
-                        self.win,
-                        self.scale,
-                        font,
-                    ));
-                } else {
-                    self.submenu = None;
-                }
-            }
-        } else if self.submenu.is_none() && self.hover.is_some() {
-            self.set_hover(None);
+        if item != self.hover {
+            self.set_hover(item);
             changed = true;
         }
+
         changed
     }
 
@@ -525,32 +584,49 @@ impl Menu {
                 }
                 Entry::Submenu { label, value, .. } => {
                     let ih = ITEM_H * s;
-                    let is_active_sub = self
+                    let is_open = self
                         .submenu
                         .as_ref()
                         .is_some_and(|sub| sub.parent_index == i);
-                    let f = self.fades[i].v.max(if is_active_sub { 1.0 } else { 0.0 });
+                    let f = self.fades[i].v.max(if is_open { 0.4 } else { 0.0 });
                     if f > 0.01 {
                         cv.round_rect_alpha(ix, iy, iw, ih, R_ITEM * s, HOVER, f);
                     }
                     let baseline = iy + ih / 2.0 + (lm.ascent + lm.descent) / 2.0;
-                    cv.text(font, label, ix + 10.0 * s, baseline, px, TEXT);
 
-                    // Chevron ›
-                    let ch_x = ix + iw - 12.0 * s;
-                    let ch_y = iy + ih / 2.0;
-                    let ch_c = if f > 0.3 { TEXT } else { DIM };
-                    cv.line(ch_x - 3.5 * s, ch_y - 4.0 * s, ch_x, ch_y, 1.5 * s, ch_c);
-                    cv.line(ch_x - 3.5 * s, ch_y + 4.0 * s, ch_x, ch_y, 1.5 * s, ch_c);
+                    // Label on the left
+                    cv.text(font, label, ix + 12.0 * s, baseline, px, TEXT);
 
-                    // Value text
-                    let vw = text_width(font, value, px);
-                    cv.text(font, value, ch_x - 10.0 * s - vw, baseline, px, DIM);
+                    // Dropdown button geometry on the right
+                    if let Some((bx, by, bw, bh)) = self.dropdown_button_geometry(i, font) {
+                        let (bx, by, bw, bh) = (bx as f32, by as f32, bw as f32, bh as f32);
+                        let btn_alpha = if is_open { 0.18 } else if f > 0.01 { 0.12 } else { 0.06 };
+                        cv.round_rect_alpha(bx, by, bw, bh, 5.0 * s, TEXT, btn_alpha);
+                        cv.round_rect_alpha(bx, by, bw, bh, 5.0 * s, BORDER, 0.5);
+
+                        // Value inside button
+                        let val_x = bx + 8.0 * s;
+                        cv.text(font, value, val_x, baseline, px, TEXT);
+
+                        // Chevron «▾» or «▴»
+                        let ch_cx = bx + bw - 13.0 * s;
+                        let ch_cy = iy + ih / 2.0;
+                        let ch_c = if is_open { ACCENT } else if f > 0.01 { TEXT } else { DIM };
+                        if is_open {
+                            // Pointing up «▴»
+                            cv.line(ch_cx - 3.5 * s, ch_cy + 1.5 * s, ch_cx, ch_cy - 2.0 * s, 1.5 * s, ch_c);
+                            cv.line(ch_cx + 3.5 * s, ch_cy + 1.5 * s, ch_cx, ch_cy - 2.0 * s, 1.5 * s, ch_c);
+                        } else {
+                            // Pointing down «▾»
+                            cv.line(ch_cx - 3.5 * s, ch_cy - 1.5 * s, ch_cx, ch_cy + 2.0 * s, 1.5 * s, ch_c);
+                            cv.line(ch_cx + 3.5 * s, ch_cy - 1.5 * s, ch_cx, ch_cy + 2.0 * s, 1.5 * s, ch_c);
+                        }
+                    }
                 }
             }
         }
 
-        // Draw Submenu if open
+        // Draw floating dropdown list if open
         if let Some(sub) = &self.submenu {
             let (sx, sy, sw, sh) = (sub.x as f32, sub.y as f32, sub.w as f32, sub.h as f32);
             surface(cv, sx, sy, sw, sh, R_MENU * s, s);
@@ -601,7 +677,7 @@ mod tests {
     }
 
     #[test]
-    fn test_settings_submenus() {
+    fn test_settings_dropdown_click() {
         let fonts = test_fonts();
         let entries = settings_entries(None, DeleteMode::Trash, 100);
         assert_eq!(entries.len(), 5);
@@ -611,16 +687,20 @@ mod tests {
         assert!(bw1 > 0 && bh1 > 0);
         assert!(menu.submenu.is_none());
 
-        // Hover over first entry (Language submenu)
+        // Hover over first entry does NOT open dropdown
         let inside_first = (menu.x as f64 + 10.0, menu.y as f64 + 10.0);
         assert!(menu.update_cursor(inside_first, &fonts));
-        assert!(menu.submenu.is_some());
+        assert!(menu.submenu.is_none(), "hover must not open dropdown");
 
-        // Bounds should now expand to include the submenu
-        let (_bx2, _by2, bw2, _bh2) = menu.bounds();
-        assert!(bw2 > bw1);
+        // Click on first entry opens dropdown
+        assert!(menu.handle_click(inside_first, &fonts));
+        assert!(menu.submenu.is_some(), "click must open dropdown");
 
-        // Point inside submenu should return true for contains
+        // Bounds should expand to include the dropdown list
+        let (_bx2, _by2, _bw2, bh2) = menu.bounds();
+        assert!(bh2 > bh1);
+
+        // Point inside dropdown should return true for contains
         let sub = menu.submenu.as_ref().unwrap();
         let sub_point = (sub.x as f64 + 10.0, sub.y as f64 + 10.0);
         assert!(menu.contains(sub_point));
@@ -628,5 +708,9 @@ mod tests {
         // Submenu item action
         let act = menu.action_under(sub_point);
         assert!(matches!(act, Some(Action::SetLanguage(_))));
+
+        // Clicking first entry again toggles it closed
+        assert!(menu.handle_click(inside_first, &fonts));
+        assert!(menu.submenu.is_none(), "clicking again must close dropdown");
     }
 }

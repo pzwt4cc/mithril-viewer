@@ -2124,11 +2124,12 @@ impl ApplicationHandler<UserEvent> for App {
                         self.apply(a);
                         return;
                     }
+                    if menu.handle_click(self.cursor, &self.font) {
+                        self.menu_dirty = true;
+                        self.redraw();
+                        return;
+                    }
                     if menu.contains(self.cursor) {
-                        if menu.update_cursor(self.cursor, &self.font) {
-                            self.menu_dirty = true;
-                            self.redraw();
-                        }
                         return;
                     }
                     self.close_menu();
