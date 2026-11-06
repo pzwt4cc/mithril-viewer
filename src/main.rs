@@ -937,10 +937,10 @@ impl App {
         }
     }
 
-    fn apply_crop(&mut self) {
-        let Some(c) = self.crop.take() else { return };
+    fn perform_crop(&mut self) -> bool {
+        let Some(c) = self.crop.take() else { return false };
         let Some(img) = self.image.as_ref() else {
-            return;
+            return false;
         };
         let (iw, ih) = img.dimensions();
         let x = (c.rect[0].round().max(0.0) as u32).min(iw.saturating_sub(1));
@@ -949,7 +949,7 @@ impl App {
         let h = ((c.rect[3] - c.rect[1]).round().max(1.0) as u32).min(ih - y);
         if (x, y, w, h) == (0, 0, iw, ih) {
             self.redraw();
-            return;
+            return false;
         }
         let cropped = imageops::crop_imm(img, x, y, w, h).to_image();
         if let Some(gpu) = &mut self.gpu {
@@ -963,6 +963,19 @@ impl App {
         self.sidebar_dirty = true;
         self.view.reset();
         self.modified = true;
+        self.redraw();
+        true
+    }
+
+    fn apply_crop(&mut self) {
+        if !self.perform_crop() {
+            return;
+        }
+        let Some(lay) = self.layout() else { return };
+        self.close_menu();
+        self.dialog = Some(Dialog::crop(&self.font, lay.scale));
+        self.dialog_dirty = true;
+        self.update_modal_hover();
         self.redraw();
     }
 
@@ -1036,6 +1049,22 @@ impl App {
                     self.show_toast(format!("{}: {e}", tr("toast.save_failed")));
                 }
             },
+            DialogAction::CropReplace => {
+                self.close_dialog();
+                if let Err(e) = self.overwrite_current() {
+                    self.show_toast(format!("{}: {e}", tr("toast.save_failed")));
+                }
+            }
+            DialogAction::CropCopy => {
+                self.close_dialog();
+                match self.save_copy() {
+                    Ok(_) => {
+                        self.modified = false;
+                        self.rescan();
+                    }
+                    Err(e) => self.show_toast(format!("{}: {e}", tr("toast.save_failed"))),
+                }
+            }
         }
     }
 
@@ -1093,6 +1122,42 @@ impl App {
                 self.redraw();
             }
         }
+    }
+
+    fn save_to_path(&self, target: &std::path::Path) -> Result<(), String> {
+        use std::io::Write;
+        let img = self.image.as_ref().ok_or("no image")?;
+        let orig_ext = target
+            .extension()
+            .map(|e| e.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        let fmt = match self.src.and_then(|s| s.format) {
+            Some(f) if !orig_ext.is_empty() => f,
+            _ => ImageFormat::Png,
+        };
+        let file = std::fs::File::create(target).map_err(|e| e.to_string())?;
+        let mut w = std::io::BufWriter::new(file);
+        let result = if fmt == ImageFormat::Jpeg {
+            let rgb = DynamicImage::ImageRgba8(img.clone()).into_rgb8();
+            let enc = image::codecs::jpeg::JpegEncoder::new_with_quality(&mut w, 92);
+            DynamicImage::ImageRgb8(rgb).write_with_encoder(enc)
+        } else {
+            DynamicImage::ImageRgba8(img.clone()).write_to(&mut w, fmt)
+        };
+        result.map_err(|e| e.to_string())?;
+        w.flush().map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
+    fn overwrite_current(&mut self) -> Result<(), String> {
+        let path = self.path.clone().ok_or("no path")?;
+        self.save_to_path(&path)?;
+        self.modified = false;
+        self.refresh_info();
+        self.sidebar_dirty = true;
+        self.header_dirty = true;
+        self.redraw();
+        Ok(())
     }
 
     fn save_copy(&self) -> Result<PathBuf, String> {

@@ -51,6 +51,8 @@ pub enum DialogAction {
     Cancel,
     Discard,
     Save,
+    CropReplace,
+    CropCopy,
 }
 
 pub struct Dialog {
@@ -64,6 +66,40 @@ pub struct Dialog {
 }
 
 impl Dialog {
+    pub fn crop(font: &Fonts, scale: f32) -> Self {
+        let s = scale;
+        let w = 440.0 * s;
+        let pad = 22.0 * s;
+        let (title_h, line_h, btn_h, gap) = (24.0 * s, 19.0 * s, 34.0 * s, 8.0 * s);
+        let lines = wrap(font, tr("crop.dialog_text"), 13.5 * s, w - 2.0 * pad);
+        let h = pad + title_h + lines.len() as f32 * line_h + 20.0 * s + btn_h + pad;
+
+        let specs = [
+            (tr("dialog.cancel"), DialogAction::Cancel),
+            (tr("crop.replace"), DialogAction::CropReplace),
+            (tr("crop.save_copy"), DialogAction::CropCopy),
+        ];
+        let mut buttons = Vec::new();
+        let mut x = w - pad;
+        for (label, action) in specs.iter().rev() {
+            let bw = button_width(font, label, s);
+            x -= bw;
+            buttons.push((*label, *action, (x, h - pad - btn_h, bw, btn_h)));
+            x -= gap;
+        }
+        buttons.reverse();
+
+        Self {
+            title: tr("crop.dialog_title"),
+            lines,
+            buttons,
+            w: w.round() as i32,
+            h: h.round() as i32,
+            scale,
+            hover: None,
+        }
+    }
+
     pub fn unsaved(font: &Fonts, scale: f32) -> Self {
         let s = scale;
         let w = 400.0 * s;
@@ -141,7 +177,7 @@ impl Dialog {
             }
         }
         for (i, (label, action, r)) in self.buttons.iter().enumerate() {
-            let primary = *action == DialogAction::Save;
+            let primary = matches!(*action, DialogAction::Save | DialogAction::CropCopy);
             draw_button(cv, font, *r, label, primary, self.hover == Some(i), s);
         }
     }

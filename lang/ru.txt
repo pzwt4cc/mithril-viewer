@@ -48,3 +48,7 @@ crop.free = Свободно
 crop.original = Оригинал
 empty.folder = Открыть папку…
 toast.no_images = В папке нет изображений
+crop.dialog_title = Сохранить обрезку?
+crop.dialog_text = Выберите, перезаписать исходный файл или сохранить результат рядом как новый файл.
+crop.replace = Заменить
+crop.save_copy = Сохранить рядом

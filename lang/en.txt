@@ -48,3 +48,7 @@ crop.free = Free
 crop.original = Original
 empty.folder = Open folder…
 toast.no_images = No images in this folder
+crop.dialog_title = Save crop?
+crop.dialog_text = Choose whether to replace the original file or save as a new copy alongside it.
+crop.replace = Replace
+crop.save_copy = Save as copy
