@@ -61,6 +61,7 @@ pub struct Crop {
     pub bar: CropBar,
     pub bar_dirty: bool,
     pub appear: Fade,
+    pub canceling: bool,
 }
 
 pub fn ratio_rect(r: f32, c: (f32, f32), iw: f32, ih: f32) -> [f32; 4] {
@@ -161,7 +162,7 @@ fn quad(gpu: &Gpu, slot: usize, x0: f32, y0: f32, x1: f32, y1: f32, a: f32) {
     }
 }
 
-pub fn draw_crop(gpu: &Gpu, s: f32, c: [f32; 4], im: [f32; 4], vp: (i32, i32, u32, u32)) {
+pub fn draw_crop(gpu: &Gpu, s: f32, c: [f32; 4], im: [f32; 4], vp: (i32, i32, u32, u32), alpha: f32) {
     let (vx, vy, vw, vh) = vp;
     let (ix0, iy0) = (im[0].max(vx as f32), im[1].max(vy as f32));
     let (ix1, iy1) = (
@@ -170,7 +171,7 @@ pub fn draw_crop(gpu: &Gpu, s: f32, c: [f32; 4], im: [f32; 4], vp: (i32, i32, u3
     );
     let (cx0, cy0) = (c[0].max(ix0).min(ix1), c[1].max(iy0).min(iy1));
     let (cx1, cy1) = (c[2].max(ix0).min(ix1), c[3].max(iy0).min(iy1));
-    let dim = 0.55;
+    let dim = 0.55 * alpha;
     quad(gpu, gpu::BLACK, ix0, iy0, ix1, cy0, dim);
     quad(gpu, gpu::BLACK, ix0, cy1, ix1, iy1, dim);
     quad(gpu, gpu::BLACK, ix0, cy0, cx0, cy1, dim);
@@ -180,15 +181,15 @@ pub fn draw_crop(gpu: &Gpu, s: f32, c: [f32; 4], im: [f32; 4], vp: (i32, i32, u3
         let f = i as f32 / 3.0;
         let x = c[0] + (c[2] - c[0]) * f;
         let y = c[1] + (c[3] - c[1]) * f;
-        quad(gpu, gpu::WHITE, x, c[1], x + 1.0, c[3], 0.3);
-        quad(gpu, gpu::WHITE, c[0], y, c[2], y + 1.0, 0.3);
+        quad(gpu, gpu::WHITE, x, c[1], x + 1.0, c[3], 0.3 * alpha);
+        quad(gpu, gpu::WHITE, c[0], y, c[2], y + 1.0, 0.3 * alpha);
     }
 
-    let t = (1.5 * s).max(1.0);
-    quad(gpu, gpu::WHITE, c[0], c[1], c[2], c[1] + t, 1.0);
-    quad(gpu, gpu::WHITE, c[0], c[3] - t, c[2], c[3], 1.0);
-    quad(gpu, gpu::WHITE, c[0], c[1], c[0] + t, c[3], 1.0);
-    quad(gpu, gpu::WHITE, c[2] - t, c[1], c[2], c[3], 1.0);
+    let t = (1.5 * s).max(alpha);
+    quad(gpu, gpu::WHITE, c[0], c[1], c[2], c[1] + t, alpha);
+    quad(gpu, gpu::WHITE, c[0], c[3] - t, c[2], c[3], alpha);
+    quad(gpu, gpu::WHITE, c[0], c[1], c[0] + t, c[3], alpha);
+    quad(gpu, gpu::WHITE, c[2] - t, c[1], c[2], c[3], alpha);
 
     let (mx, my) = ((c[0] + c[2]) / 2.0, (c[1] + c[3]) / 2.0);
     let hs = 4.5 * s;
@@ -211,7 +212,7 @@ pub fn draw_crop(gpu: &Gpu, s: f32, c: [f32; 4], im: [f32; 4], vp: (i32, i32, u3
             py + hs + 1.0,
             0.45,
         );
-        quad(gpu, gpu::WHITE, px - hs, py - hs, px + hs, py + hs, 1.0);
+        quad(gpu, gpu::WHITE, px - hs, py - hs, px + hs, py + hs, alpha);
     }
 }
 

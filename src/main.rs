@@ -430,7 +430,7 @@ impl App {
     }
 
     fn pick_file(&mut self) {
-        if self.picking || self.dialog.is_some() || self.crop.is_some() {
+        if self.picking || self.dialog.is_some() || self.crop_active() {
             return;
         }
         self.close_menu();
@@ -452,7 +452,7 @@ impl App {
     }
 
     fn pick_folder(&mut self) {
-        if self.picking || self.dialog.is_some() || self.crop.is_some() {
+        if self.picking || self.dialog.is_some() || self.crop_active() {
             return;
         }
         self.close_menu();
@@ -473,7 +473,7 @@ impl App {
     }
 
     fn open_dir(&mut self, dir: PathBuf) {
-        if self.dialog.is_some() || self.crop.is_some() {
+        if self.dialog.is_some() || self.crop_active() {
             return;
         }
         let Some(first) = first_image(&dir) else {
@@ -498,7 +498,7 @@ impl App {
     }
 
     fn open_external(&mut self, path: PathBuf) {
-        if self.dialog.is_some() || self.crop.is_some() {
+        if self.dialog.is_some() || self.crop_active() {
             return;
         }
         if self.modified {
@@ -513,7 +513,7 @@ impl App {
     }
 
     fn navigate(&mut self, delta: isize) {
-        if self.crop.is_some() || self.dialog.is_some() || self.siblings.len() < 2 {
+        if self.crop_active() || self.dialog.is_some() || self.siblings.len() < 2 {
             return;
         }
         if self.modified {
@@ -667,7 +667,7 @@ impl App {
     }
 
     fn rotate(&mut self, clockwise: bool) {
-        if self.crop.is_some() || self.dialog.is_some() {
+        if self.crop_active() || self.dialog.is_some() {
             return;
         }
         let Some(img) = self.image.take() else { return };
@@ -800,7 +800,7 @@ impl App {
             window.request_redraw();
         }
 
-        let rh = if self.crop.is_some() && self.dialog.is_none() {
+        let rh = if self.crop_active() && self.dialog.is_none() {
             lay.ratio_at(self.cursor)
         } else {
             None
@@ -872,7 +872,7 @@ impl App {
     }
 
     fn start_crop(&mut self) {
-        if self.crop.is_some() || self.dialog.is_some() {
+        if self.crop_active() || self.dialog.is_some() {
             return;
         }
         if self.anim.is_some() {
@@ -894,6 +894,7 @@ impl App {
             bar: CropBar::new(&self.font, lay.scale),
             bar_dirty: true,
             appear: Fade { v: 0.0, to: 1.0 },
+            canceling: false,
         });
         self.ratio_hover = None;
         self.ratio_dirty = true;
@@ -941,9 +942,15 @@ impl App {
         self.redraw();
     }
 
+    fn crop_active(&self) -> bool {
+        self.crop.as_ref().is_some_and(|c| !c.canceling)
+    }
+
     fn cancel_crop(&mut self) {
         self.crop_backup = None;
-        if self.crop.take().is_some() {
+        if let Some(c) = &mut self.crop {
+            c.canceling = true;
+            c.appear.to = 0.0;
             self.redraw();
         }
     }
@@ -1339,9 +1346,13 @@ impl App {
             image_moving = true;
         }
         if let Some(c) = &mut self.crop {
-            if c.appear.step(dt, 16.0) {
+            if c.appear.step(dt, 20.0) {
                 busy = true;
             }
+        }
+        if self.crop.as_ref().is_some_and(|c| c.canceling && c.appear.v <= 0.003) {
+            self.crop = None;
+            busy = true;
         }
         if let Some(menu) = &mut self.menu {
             if menu.step(dt) {
@@ -1679,7 +1690,8 @@ impl App {
             );
         }
         if let Some((c, im)) = crop_scr {
-            draw_crop(gpu, lay.scale, c, im, (vx, vy, vw, vh));
+            let crop_alpha = self.crop.as_ref().map(|cr| cr.appear.v).unwrap_or(1.0);
+            draw_crop(gpu, lay.scale, c, im, (vx, vy, vw, vh), crop_alpha);
         }
 
         if let Some((ex, ey)) = empty_pos {
@@ -1709,7 +1721,7 @@ impl App {
         if let Some(t) = &self.toast {
             if let Some((bw, bh)) = gpu.overlay_size(gpu::TOAST) {
                 let x = vx + (vw as i32 - bw) / 2;
-                let lift = if self.crop.is_some() {
+                let lift = if self.crop.as_ref().is_some_and(|c| !c.canceling) {
                     (56.0 * lay.scale) as i32
                 } else {
                     0
@@ -1857,7 +1869,7 @@ impl ApplicationHandler<UserEvent> for App {
                 }
                 match event.physical_key {
                     PhysicalKey::Code(KeyCode::Escape) => {
-                        if self.crop.is_some() {
+                        if self.crop_active() {
                             self.cancel_crop();
                         } else if self.menu.is_some() {
                             self.close_menu();
@@ -1866,7 +1878,7 @@ impl ApplicationHandler<UserEvent> for App {
                         }
                     }
                     PhysicalKey::Code(KeyCode::Enter | KeyCode::NumpadEnter) => {
-                        if self.crop.is_some() {
+                        if self.crop_active() {
                             self.apply_crop();
                         } else if self.image.is_none() {
                             self.pick_file();
@@ -1952,7 +1964,7 @@ impl ApplicationHandler<UserEvent> for App {
                 button: MouseButton::Right,
                 ..
             } if state.is_pressed() => {
-                if self.dialog.is_some() || self.crop.is_some() {
+                if self.dialog.is_some() || self.crop_active() {
                     return;
                 }
                 let Some(lay) = self.layout() else { return };
@@ -2027,7 +2039,7 @@ impl ApplicationHandler<UserEvent> for App {
                         return;
                     }
                 }
-                if self.crop.is_some() {
+                if self.crop_active() {
                     if let Some(i) = lay.ratio_at(self.cursor) {
                         self.set_crop_preset(i);
                         return;
@@ -2036,7 +2048,7 @@ impl ApplicationHandler<UserEvent> for App {
                         return;
                     }
                 }
-                if self.crop.is_some() && lay.hit(self.cursor).is_none() && self.crop_press(&lay) {
+                if self.crop_active() && lay.hit(self.cursor).is_none() && self.crop_press(&lay) {
                     return;
                 }
                 match lay.hit(self.cursor) {
