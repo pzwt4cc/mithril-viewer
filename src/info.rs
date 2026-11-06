@@ -7,6 +7,7 @@ use image::ImageFormat;
 
 use crate::i18n::tr;
 
+#[derive(Clone)]
 pub struct Info {
     pub name: String,
     pub folder: String,

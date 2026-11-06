@@ -266,6 +266,7 @@ struct App {
     settings_open: bool,
     toast: Option<Toast>,
     crop: Option<Crop>,
+    crop_backup: Option<(RgbaImage, Option<Source>, Option<Info>, bool)>,
     dialog: Option<Dialog>,
     dialog_dirty: bool,
     modified: bool,
@@ -317,6 +318,7 @@ impl App {
             settings_open: false,
             toast: None,
             crop: None,
+            crop_backup: None,
             dialog: None,
             dialog_dirty: false,
             modified: false,
@@ -932,6 +934,7 @@ impl App {
     }
 
     fn cancel_crop(&mut self) {
+        self.crop_backup = None;
         if self.crop.take().is_some() {
             self.redraw();
         }
@@ -942,6 +945,7 @@ impl App {
         let Some(img) = self.image.as_ref() else {
             return false;
         };
+        self.crop_backup = Some((img.clone(), self.src, self.info.clone(), self.modified));
         let (iw, ih) = img.dimensions();
         let x = (c.rect[0].round().max(0.0) as u32).min(iw.saturating_sub(1));
         let y = (c.rect[1].round().max(0.0) as u32).min(ih.saturating_sub(1));
@@ -1040,22 +1044,45 @@ impl App {
 
     fn dialog_action(&mut self, a: DialogAction, el: &ActiveEventLoop) {
         match a {
-            DialogAction::Cancel => self.close_dialog(),
-            DialogAction::Discard => self.finish_dialog(el),
+            DialogAction::Cancel => {
+                self.close_dialog();
+                if let Some((img, src, info, modified)) = self.crop_backup.take() {
+                    if let Some(gpu) = &mut self.gpu {
+                        gpu.set_image(&img);
+                    }
+                    self.image = Some(img);
+                    self.src = src;
+                    self.info = info;
+                    self.modified = modified;
+                    self.sidebar_dirty = true;
+                    self.header_dirty = true;
+                    self.view.reset();
+                    self.redraw();
+                }
+            }
+            DialogAction::Discard => {
+                self.crop_backup = None;
+                self.finish_dialog(el);
+            }
             DialogAction::Save => match self.save_copy() {
-                Ok(_) => self.finish_dialog(el),
+                Ok(_) => {
+                    self.crop_backup = None;
+                    self.finish_dialog(el);
+                }
                 Err(e) => {
                     self.close_dialog();
                     self.show_toast(format!("{}: {e}", tr("toast.save_failed")));
                 }
             },
             DialogAction::CropReplace => {
+                self.crop_backup = None;
                 self.close_dialog();
                 if let Err(e) = self.overwrite_current() {
                     self.show_toast(format!("{}: {e}", tr("toast.save_failed")));
                 }
             }
             DialogAction::CropCopy => {
+                self.crop_backup = None;
                 self.close_dialog();
                 match self.save_copy() {
                     Ok(_) => {
