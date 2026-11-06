@@ -7,7 +7,8 @@ use crate::{
     surface,
 };
 
-const MENU_W: f32 = 296.0;
+const CONTEXT_MENU_W: f32 = 240.0;
+const SETTINGS_MENU_W: f32 = 370.0;
 const ITEM_H: f32 = 34.0;
 const SECTION_H: f32 = 30.0;
 const SEP_H: f32 = 9.0;
@@ -284,7 +285,9 @@ impl Menu {
             tops.push(y);
             y += height(e);
         }
-        let w = (MENU_W * scale).round() as i32;
+        let is_settings = entries.iter().any(|e| matches!(e, Entry::Submenu { .. }));
+        let base_w = if is_settings { SETTINGS_MENU_W } else { CONTEXT_MENU_W };
+        let w = (base_w * scale).round() as i32;
         let h = ((y + MENU_PAD) * scale).round() as i32;
         let ax = if align_right { anchor.0 - w } else { anchor.0 };
         let x = ax.min(win.0 as i32 - w).max(0);
