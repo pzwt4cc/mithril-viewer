@@ -1,3 +1,4 @@
+mod theme;
 mod anim;
 mod config;
 mod draw;
@@ -35,7 +36,7 @@ use winit::{
 
 use anim::Anim;
 use config::{Config, DeleteMode};
-use draw::{Canvas, Rgb, ellipsize, lerp, text_width};
+use draw::{Canvas, ellipsize, text_width};
 use fonts::Fonts;
 use gpu::Gpu;
 use i18n::tr;
@@ -60,17 +61,6 @@ fn window_icon() -> Option<Icon> {
     Icon::from_rgba(img.into_raw(), w, h).ok()
 }
 
-pub const SURF_TOP: Rgb = [0x3b, 0x3e, 0x44];
-const SURF_BOT: Rgb = [0x36, 0x39, 0x3f];
-const EDGE_TOP: Rgb = [0x4b, 0x4f, 0x57];
-const EDGE_BOT: Rgb = [0x46, 0x4a, 0x51];
-pub const BORDER: Rgb = [0x4b, 0x4f, 0x57];
-pub const HOVER: Rgb = [0x4a, 0x4e, 0x57];
-pub const ACTIVE: Rgb = [0x56, 0x5e, 0x73];
-pub const TEXT: Rgb = [0xee, 0xef, 0xf2];
-pub const ACCENT: Rgb = [0xff, 0xff, 0xff];
-pub const DIM: Rgb = [0xa3, 0xa8, 0xb1];
-pub const DANGER: Rgb = [0xd9, 0x4f, 0x4f];
 
 const R_WINDOW: f32 = 14.0;
 pub const R_PILL: f32 = 9.0;
@@ -87,34 +77,21 @@ const SHADOW_BLUR: f32 = 8.0;
 const NAV_REPEAT: Duration = Duration::from_millis(60);
 
 pub fn surface(cv: &mut Canvas, x: f32, y: f32, w: f32, h: f32, r: f32, s: f32) {
-    cv.shadow(x, y + 2.0 * s, w, h, r, SHADOW_BLUR * s, 0.22);
-    cv.round_rect_grad(x, y, w, h, r, EDGE_TOP, EDGE_BOT);
+    let t = theme::current();
+    let shadow_alpha = if t.is_light { 0.12 } else { 0.22 };
+    cv.shadow(x, y + 2.0 * s, w, h, r, SHADOW_BLUR * s, shadow_alpha);
+    cv.round_rect_grad(x, y, w, h, r, t.edge_top, t.edge_bot);
     cv.round_rect_grad(
         x + 1.0,
         y + 1.0,
         w - 2.0,
         h - 2.0,
         r - 1.0,
-        SURF_TOP,
-        SURF_BOT,
+        t.surf_top,
+        t.surf_bot,
     );
 }
 
-fn bg_texture() -> Vec<u32> {
-    const N: usize = 64;
-    let (center, edge): (Rgb, Rgb) = ([0x37, 0x3a, 0x40], [0x2a, 0x2c, 0x30]);
-    let mut v = Vec::with_capacity(N * N);
-    for y in 0..N {
-        for x in 0..N {
-            let nx = (x as f32 + 0.5) / N as f32 * 2.0 - 1.0;
-            let ny = (y as f32 + 0.5) / N as f32 * 2.0 - 1.0;
-            let t = ((nx * nx + ny * ny).sqrt() / 1.25).clamp(0.0, 1.0);
-            let c = lerp(center, edge, t * t * (3.0 - 2.0 * t));
-            v.push(0xff00_0000 | (c[0] as u32) << 16 | (c[1] as u32) << 8 | c[2] as u32);
-        }
-    }
-    v
-}
 
 #[derive(Clone, Copy)]
 pub struct Fade {
@@ -610,6 +587,7 @@ impl App {
     fn open_settings(&mut self) {
         let Some(lay) = self.layout() else { return };
         let entries = menu::settings_entries(
+            self.config.theme,
             self.config.language.as_deref(),
             self.config.delete_mode,
             self.config.opacity,
@@ -633,6 +611,25 @@ impl App {
             }
             self.redraw();
         }
+    }
+
+    fn set_theme(&mut self, mode: theme::ThemeMode) {
+        self.config.theme = mode;
+        config::save(&self.config);
+        theme::set(mode);
+        if let Some(gpu) = &mut self.gpu {
+            gpu.set_overlay(gpu::BG, &theme::bg_texture(), 64, 64);
+        }
+        self.header_dirty = true;
+        self.sidebar_dirty = true;
+        self.menu_dirty = true;
+        self.dialog_dirty = true;
+        self.empty_dirty = true;
+        self.ratio_dirty = true;
+        if let Some(c) = &mut self.crop {
+            c.bar_dirty = true;
+        }
+        self.redraw();
     }
 
     fn set_language(&mut self, code: &'static str) {
@@ -661,6 +658,7 @@ impl App {
             Action::Print => self.print(),
             Action::Copy => self.copy_image(),
             Action::Delete => self.request_delete(),
+            Action::SetTheme(mode) => self.set_theme(mode),
             Action::SetLanguage(code) => self.set_language(code),
             Action::SetOpacity(p) => {
                 self.config.opacity = p;
@@ -1528,7 +1526,7 @@ impl App {
                     surface(&mut cv, pad, pad, fw, fh, R_PILL * s, s);
                     if let Some(lm) = self.font.horizontal_line_metrics(px) {
                         let baseline = pad + fh / 2.0 + (lm.ascent + lm.descent) / 2.0;
-                        cv.text(&self.font, &text, pad + (fw - tw) / 2.0, baseline, px, TEXT);
+                        cv.text(&self.font, &text, pad + (fw - tw) / 2.0, baseline, px, theme::current().text);
                     }
                 }
                 toast_buf = Some((tb, bw, bh));
@@ -1831,7 +1829,7 @@ impl ApplicationHandler<UserEvent> for App {
 
         match Gpu::new(el, attrs) {
             Ok((window, mut gpu)) => {
-                gpu.set_overlay(gpu::BG, &bg_texture(), 64, 64);
+                gpu.set_overlay(gpu::BG, &theme::bg_texture(), 64, 64);
                 gpu.set_overlay(gpu::BLACK, &[0xff00_0000], 1, 1);
                 gpu.set_overlay(gpu::WHITE, &[0xffff_ffff], 1, 1);
                 if let Some(img) = &self.image {
@@ -2283,6 +2281,7 @@ fn main() {
     );
 
     let config = config::load();
+    theme::init(config.theme);
     i18n::init(config.language.as_deref());
 
     let event_loop = EventLoop::<UserEvent>::with_user_event().build().unwrap();

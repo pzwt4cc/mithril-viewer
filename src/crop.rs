@@ -1,8 +1,8 @@
 use winit::window::CursorIcon;
 
 use crate::{
-    ACCENT, Fade, HOVER, R_ITEM, R_PANEL, TEXT,
-    draw::{Canvas, Rgb},
+    Fade, R_ITEM, R_PANEL, theme,
+    draw::Canvas,
     fonts::Fonts,
     gpu::{self, Gpu},
     i18n::tr,
@@ -225,10 +225,10 @@ pub fn draw_ratios(
     ratio_hover: Option<usize>,
     s: f32,
 ) {
+    let t = theme::current();
     let (x, y, w, h) = panel_rect;
     surface(cv, x, y, w, h, R_PANEL * s, s);
     let px = 14.0 * s;
-    let dark: Rgb = [0x2b, 0x2d, 0x31];
     let Some(lm) = font.horizontal_line_metrics(px) else {
         return;
     };
@@ -236,9 +236,9 @@ pub fn draw_ratios(
         let preset = &PRESETS[i];
         let active = crop.preset == i;
         if active {
-            cv.round_rect(rx, ry, rw, rh, R_ITEM * s, ACCENT);
+            cv.round_rect(rx, ry, rw, rh, R_ITEM * s, t.accent);
         } else if ratio_hover == Some(i) {
-            cv.round_rect(rx, ry, rw, rh, R_ITEM * s, HOVER);
+            cv.round_rect(rx, ry, rw, rh, R_ITEM * s, t.hover);
         }
         let label = match *preset {
             Preset::Free => tr("crop.free").to_string(),
@@ -247,7 +247,7 @@ pub fn draw_ratios(
             Preset::Fixed(a, b) => format!("{a}:{b}"),
         };
         let baseline = ry + rh / 2.0 + (lm.ascent + lm.descent) / 2.0;
-        let color = if active { dark } else { TEXT };
+        let color = if active { t.on_accent } else { t.text };
         cv.text(font, &label, rx + 12.0 * s, baseline, px, color);
     }
 }

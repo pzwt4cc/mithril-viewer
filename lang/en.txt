@@ -52,3 +52,9 @@ crop.dialog_title = Save crop?
 crop.dialog_text = Choose whether to replace the original file or save as a new copy alongside it.
 crop.replace = Replace
 crop.save_copy = Save as copy
+
+settings.theme = Theme
+settings.theme_system = System
+settings.theme_neutral = Neutral
+settings.theme_dark = Dark
+settings.theme_light = Light

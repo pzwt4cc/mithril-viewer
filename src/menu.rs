@@ -1,10 +1,11 @@
 use crate::{
-    ACCENT, BORDER, DIM, Fade, HOVER, R_ITEM, R_MENU, SHADOW_PAD, TEXT,
+    Fade, R_ITEM, R_MENU, SHADOW_PAD,
     config::DeleteMode,
     draw::{Canvas, text_width},
     fonts::Fonts,
     i18n::{available, tr},
     surface,
+    theme::{self, ThemeMode},
 };
 
 const CONTEXT_MENU_W: f32 = 240.0;
@@ -26,6 +27,7 @@ pub enum Action {
     SetLanguage(&'static str),
     SetDeleteMode(DeleteMode),
     SetOpacity(u8),
+    SetTheme(ThemeMode),
 }
 
 #[derive(Clone)]
@@ -88,7 +90,44 @@ pub fn context_entries(mode: DeleteMode) -> Vec<Entry> {
 
 const OPACITIES: [(u8, &str); 4] = [(100, "100%"), (85, "85%"), (70, "70%"), (55, "55%")];
 
-pub fn settings_entries(language: Option<&str>, mode: DeleteMode, opacity: u8) -> Vec<Entry> {
+pub fn settings_entries(
+    theme: ThemeMode,
+    language: Option<&str>,
+    mode: DeleteMode,
+    opacity: u8,
+) -> Vec<Entry> {
+    let cur_theme = match theme {
+        ThemeMode::System => tr("settings.theme_system"),
+        ThemeMode::Neutral => tr("settings.theme_neutral"),
+        ThemeMode::Dark => tr("settings.theme_dark"),
+        ThemeMode::Light => tr("settings.theme_light"),
+    };
+    let theme_items = vec![
+        Entry::Item {
+            action: Action::SetTheme(ThemeMode::System),
+            label: tr("settings.theme_system"),
+            hint: "",
+            checked: theme == ThemeMode::System,
+        },
+        Entry::Item {
+            action: Action::SetTheme(ThemeMode::Neutral),
+            label: tr("settings.theme_neutral"),
+            hint: "",
+            checked: theme == ThemeMode::Neutral,
+        },
+        Entry::Item {
+            action: Action::SetTheme(ThemeMode::Dark),
+            label: tr("settings.theme_dark"),
+            hint: "",
+            checked: theme == ThemeMode::Dark,
+        },
+        Entry::Item {
+            action: Action::SetTheme(ThemeMode::Light),
+            label: tr("settings.theme_light"),
+            hint: "",
+            checked: theme == ThemeMode::Light,
+        },
+    ];
     let mut lang_items = vec![Entry::Item {
         action: Action::SetLanguage("auto"),
         label: tr("settings.auto"),
@@ -142,6 +181,12 @@ pub fn settings_entries(language: Option<&str>, mode: DeleteMode, opacity: u8) -
     }
 
     vec![
+        Entry::Submenu {
+            label: tr("settings.theme"),
+            value: cur_theme.to_string(),
+            items: theme_items,
+        },
+        Entry::Separator,
         Entry::Submenu {
             label: tr("settings.language"),
             value: cur_lang.to_string(),
@@ -537,7 +582,8 @@ impl Menu {
             0.0
         };
 
-        let acc = ACCENT;
+        let t = theme::current();
+        let acc = t.accent;
         for (i, e) in self.entries.iter().enumerate() {
             let iy = self.y as f32 + self.tops[i] * s;
             match e {
@@ -547,13 +593,13 @@ impl Menu {
                         (iy + SEP_H * s / 2.0) as i32,
                         (iw - 16.0 * s) as i32,
                         1,
-                        BORDER,
+                        t.border,
                     );
                 }
                 Entry::Section(text) => {
                     let baseline =
                         iy + SECTION_H * s / 2.0 + (sm.ascent + sm.descent) / 2.0 + 3.0 * s;
-                    cv.text(font, text, ix + 10.0 * s, baseline, small, DIM);
+                    cv.text(font, text, ix + 10.0 * s, baseline, small, t.dim);
                 }
                 Entry::Item {
                     label,
@@ -564,7 +610,7 @@ impl Menu {
                     let ih = ITEM_H * s;
                     let f = self.fades[i].v;
                     if f > 0.01 {
-                        cv.round_rect_alpha(ix, iy, iw, ih, R_ITEM * s, HOVER, f);
+                        cv.round_rect_alpha(ix, iy, iw, ih, R_ITEM * s, t.hover, f);
                     }
                     let baseline = iy + ih / 2.0 + (lm.ascent + lm.descent) / 2.0;
                     if *checked {
@@ -579,10 +625,10 @@ impl Menu {
                             acc,
                         );
                     }
-                    cv.text(font, label, ix + 10.0 * s + indent, baseline, px, TEXT);
+                    cv.text(font, label, ix + 10.0 * s + indent, baseline, px, t.text);
                     if !hint.is_empty() {
                         let hw = text_width(font, hint, px);
-                        cv.text(font, hint, ix + iw - 10.0 * s - hw, baseline, px, DIM);
+                        cv.text(font, hint, ix + iw - 10.0 * s - hw, baseline, px, t.dim);
                     }
                 }
                 Entry::Submenu { label, value, .. } => {
@@ -593,28 +639,28 @@ impl Menu {
                         .is_some_and(|sub| sub.parent_index == i);
                     let f = self.fades[i].v.max(if is_open { 0.4 } else { 0.0 });
                     if f > 0.01 {
-                        cv.round_rect_alpha(ix, iy, iw, ih, R_ITEM * s, HOVER, f);
+                        cv.round_rect_alpha(ix, iy, iw, ih, R_ITEM * s, t.hover, f);
                     }
                     let baseline = iy + ih / 2.0 + (lm.ascent + lm.descent) / 2.0;
 
                     // Label on the left
-                    cv.text(font, label, ix + 12.0 * s, baseline, px, TEXT);
+                    cv.text(font, label, ix + 12.0 * s, baseline, px, t.text);
 
                     // Dropdown button geometry on the right
                     if let Some((bx, by, bw, bh)) = self.dropdown_button_geometry(i, font) {
                         let (bx, by, bw, bh) = (bx as f32, by as f32, bw as f32, bh as f32);
                         let btn_alpha = if is_open { 0.18 } else if f > 0.01 { 0.12 } else { 0.06 };
-                        cv.round_rect_alpha(bx, by, bw, bh, 5.0 * s, TEXT, btn_alpha);
-                        cv.round_rect_alpha(bx, by, bw, bh, 5.0 * s, BORDER, 0.5);
+                        cv.round_rect_alpha(bx, by, bw, bh, 5.0 * s, t.text, btn_alpha);
+                        cv.round_rect_alpha(bx, by, bw, bh, 5.0 * s, t.border, 0.5);
 
                         // Value inside button
                         let val_x = bx + 8.0 * s;
-                        cv.text(font, value, val_x, baseline, px, TEXT);
+                        cv.text(font, value, val_x, baseline, px, t.text);
 
                         // Chevron «▾» or «▴»
                         let ch_cx = bx + bw - 13.0 * s;
                         let ch_cy = iy + ih / 2.0;
-                        let ch_c = if is_open { ACCENT } else if f > 0.01 { TEXT } else { DIM };
+                        let ch_c = if is_open { t.accent } else if f > 0.01 { t.text } else { t.dim };
                         if is_open {
                             // Pointing up «▴»
                             cv.line(ch_cx - 3.5 * s, ch_cy + 1.5 * s, ch_cx, ch_cy - 2.0 * s, 1.5 * s, ch_c);
@@ -642,7 +688,7 @@ impl Menu {
                     let ih = ITEM_H * s;
                     let f = sub.fades[i].v;
                     if f > 0.01 {
-                        cv.round_rect_alpha(six, siy, siw, ih, R_ITEM * s, HOVER, f);
+                        cv.round_rect_alpha(six, siy, siw, ih, R_ITEM * s, t.hover, f);
                     }
                     let baseline = siy + ih / 2.0 + (lm.ascent + lm.descent) / 2.0;
                     if *checked {
@@ -657,7 +703,7 @@ impl Menu {
                             acc,
                         );
                     }
-                    cv.text(font, label, six + 26.0 * s, baseline, px, TEXT);
+                    cv.text(font, label, six + 26.0 * s, baseline, px, t.text);
                 }
             }
         }
@@ -682,8 +728,8 @@ mod tests {
     #[test]
     fn test_settings_dropdown_click() {
         let fonts = test_fonts();
-        let entries = settings_entries(None, DeleteMode::Trash, 100);
-        assert_eq!(entries.len(), 5);
+        let entries = settings_entries(ThemeMode::System, None, DeleteMode::Trash, 100);
+        assert_eq!(entries.len(), 7);
 
         let mut menu = Menu::new(entries, (400, 100), (800, 600), 1.0, true);
         let (_bx1, _by1, bw1, bh1) = menu.bounds();
@@ -710,7 +756,7 @@ mod tests {
 
         // Submenu item action
         let act = menu.action_under(sub_point);
-        assert!(matches!(act, Some(Action::SetLanguage(_))));
+        assert!(matches!(act, Some(Action::SetTheme(_))));
 
         // Clicking first entry again toggles it closed
         assert!(menu.handle_click(inside_first, &fonts));

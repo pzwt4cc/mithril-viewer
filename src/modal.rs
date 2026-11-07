@@ -1,14 +1,11 @@
 use crate::{
-    ACCENT, DIM, R_BTN, R_MENU, R_PILL, SHADOW_PAD, TEXT,
+    R_BTN, R_MENU, R_PILL, SHADOW_PAD,
     draw::{Canvas, Rgb, lerp, text_width, wrap},
     fonts::Fonts,
     i18n::tr,
     surface,
+    theme,
 };
-
-const BTN_BG: Rgb = [0x45, 0x49, 0x51];
-const BTN_BG_HOVER: Rgb = [0x55, 0x5a, 0x64];
-const ON_ACCENT: Rgb = [0x1c, 0x1f, 0x26];
 
 type Rect = (f32, f32, f32, f32);
 
@@ -29,19 +26,20 @@ fn draw_button(
     hover: bool,
     s: f32,
 ) {
-    let acc = ACCENT;
+    let t = theme::current();
+    let acc = t.accent;
     let fill = match (primary, hover) {
         (true, false) => acc,
-        (true, true) => lerp(acc, [255, 255, 255], 0.28),
-        (false, false) => BTN_BG,
-        (false, true) => BTN_BG_HOVER,
+        (true, true) => lerp(acc, if t.is_light { [0, 0, 0] } else { [255, 255, 255] }, 0.2),
+        (false, false) => t.btn_bg,
+        (false, true) => t.btn_bg_hover,
     };
     cv.round_rect(r.0, r.1, r.2, r.3, R_BTN * s, fill);
     let px = 13.5 * s;
     let tw = text_width(font, label, px);
     if let Some(lm) = font.horizontal_line_metrics(px) {
         let baseline = r.1 + r.3 / 2.0 + (lm.ascent + lm.descent) / 2.0;
-        let color = if primary { ON_ACCENT } else { TEXT };
+        let color = if primary { t.on_accent } else { t.text };
         cv.text(font, label, r.0 + (r.2 - tw) / 2.0, baseline, px, color);
     }
 }
@@ -163,17 +161,18 @@ impl Dialog {
         let pad = 22.0 * s;
         let (title_h, line_h) = (24.0 * s, 19.0 * s);
 
+        let t = theme::current();
         let tpx = 16.0 * s;
         if let Some(lm) = font.horizontal_line_metrics(tpx) {
             let baseline = pad + title_h / 2.0 + (lm.ascent + lm.descent) / 2.0;
-            cv.text(font, self.title, pad, baseline, tpx, TEXT);
+            cv.text(font, self.title, pad, baseline, tpx, t.text);
         }
         let px = 13.5 * s;
         if let Some(lm) = font.horizontal_line_metrics(px) {
             for (i, line) in self.lines.iter().enumerate() {
                 let top = pad + title_h + i as f32 * line_h;
                 let baseline = top + line_h / 2.0 + (lm.ascent + lm.descent) / 2.0;
-                cv.text(font, line, pad, baseline, px, DIM);
+                cv.text(font, line, pad, baseline, px, t.dim);
             }
         }
         for (i, (label, action, r)) in self.buttons.iter().enumerate() {
@@ -283,9 +282,10 @@ impl CropBar {
         let s = self.scale;
         surface(cv, 0.0, 0.0, self.w as f32, self.h as f32, R_PILL * s, s);
 
+        let t = theme::current();
         let px = 13.5 * s;
-        let dark_box: Rgb = [0x2c, 0x2f, 0x35];
-        let edit_border: Rgb = [0x5f, 0x65, 0x73];
+        let dark_box: Rgb = if t.is_light { [0xf0, 0xf2, 0xf6] } else { [0x2c, 0x2f, 0x35] };
+        let edit_border: Rgb = t.border;
 
         let val_w = if self.editing == Some(CropField::W) {
             &self.buf_w
@@ -302,7 +302,7 @@ impl CropBar {
         // Draw Width input box
         let (wx, wy, ww, wh) = self.rect_w;
         if self.editing == Some(CropField::W) {
-            cv.round_rect(wx - 1.0 * s, wy - 1.0 * s, ww + 2.0 * s, wh + 2.0 * s, r + 1.0 * s, ACCENT);
+            cv.round_rect(wx - 1.0 * s, wy - 1.0 * s, ww + 2.0 * s, wh + 2.0 * s, r + 1.0 * s, t.accent);
             cv.round_rect(wx, wy, ww, wh, r, dark_box);
         } else {
             cv.round_rect(wx, wy, ww, wh, r, edit_border);
@@ -312,7 +312,7 @@ impl CropBar {
         // Draw Height input box
         let (hx, hy, hw, hh) = self.rect_h;
         if self.editing == Some(CropField::H) {
-            cv.round_rect(hx - 1.0 * s, hy - 1.0 * s, hw + 2.0 * s, hh + 2.0 * s, r + 1.0 * s, ACCENT);
+            cv.round_rect(hx - 1.0 * s, hy - 1.0 * s, hw + 2.0 * s, hh + 2.0 * s, r + 1.0 * s, t.accent);
             cv.round_rect(hx, hy, hw, hh, r, dark_box);
         } else {
             cv.round_rect(hx, hy, hw, hh, r, edit_border);
@@ -324,15 +324,15 @@ impl CropBar {
 
             // text for W
             let tw = text_width(font, val_w, px);
-            cv.text(font, val_w, self.rect_w.0 + (self.rect_w.2 - tw) / 2.0, baseline, px, TEXT);
+            cv.text(font, val_w, self.rect_w.0 + (self.rect_w.2 - tw) / 2.0, baseline, px, t.text);
 
             // separator "×"
             let times_x = (self.rect_w.0 + self.rect_w.2 + self.rect_h.0) / 2.0 - text_width(font, "×", px) / 2.0;
-            cv.text(font, "×", times_x, baseline, px, DIM);
+            cv.text(font, "×", times_x, baseline, px, t.dim);
 
             // text for H
             let th = text_width(font, val_h, px);
-            cv.text(font, val_h, self.rect_h.0 + (self.rect_h.2 - th) / 2.0, baseline, px, TEXT);
+            cv.text(font, val_h, self.rect_h.0 + (self.rect_h.2 - th) / 2.0, baseline, px, t.text);
         }
 
         for (i, (label, action, r)) in self.buttons.iter().enumerate() {

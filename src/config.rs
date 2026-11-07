@@ -1,4 +1,5 @@
 use std::{env, fs, path::PathBuf};
+use crate::theme::ThemeMode;
 
 #[derive(Clone, Copy, PartialEq)]
 pub enum DeleteMode {
@@ -10,6 +11,7 @@ pub struct Config {
     pub delete_mode: DeleteMode,
     pub language: Option<String>,
     pub opacity: u8,
+    pub theme: ThemeMode,
 }
 
 impl Default for Config {
@@ -18,6 +20,7 @@ impl Default for Config {
             delete_mode: DeleteMode::Trash,
             language: None,
             opacity: 100,
+            theme: ThemeMode::System,
         }
     }
 }
@@ -65,6 +68,9 @@ pub fn load() -> Config {
                     cfg.opacity = p.clamp(40, 100);
                 }
             }
+            "theme" => {
+                cfg.theme = ThemeMode::parse(v);
+            }
             _ => {}
         }
     }
@@ -82,10 +88,11 @@ pub fn save(cfg: &Config) {
     };
     let lang = cfg.language.as_deref().unwrap_or("auto");
     let tmp = path.with_extension("conf.tmp");
+    let theme_str = cfg.theme.as_str();
     if fs::write(
         &tmp,
         format!(
-            "delete_mode = {mode}\nlanguage = {lang}\nopacity = {}\n",
+            "delete_mode = {mode}\nlanguage = {lang}\nopacity = {}\ntheme = {theme_str}\n",
             cfg.opacity
         ),
     )
