@@ -284,7 +284,7 @@ impl CropBar {
 
         let t = theme::current();
         let px = 13.5 * s;
-        let dark_box: Rgb = if t.is_light { [0xf0, 0xf2, 0xf6] } else { [0x2c, 0x2f, 0x35] };
+        let dark_box: Rgb = if t.is_light { [0xf0, 0xf2, 0xf6] } else { t.btn_bg };
         let edit_border: Rgb = t.border;
 
         let val_w = if self.editing == Some(CropField::W) {

@@ -649,9 +649,15 @@ impl Menu {
                     // Dropdown button geometry on the right
                     if let Some((bx, by, bw, bh)) = self.dropdown_button_geometry(i, font) {
                         let (bx, by, bw, bh) = (bx as f32, by as f32, bw as f32, bh as f32);
-                        let btn_alpha = if is_open { 0.18 } else if f > 0.01 { 0.12 } else { 0.06 };
-                        cv.round_rect_alpha(bx, by, bw, bh, 5.0 * s, t.text, btn_alpha);
-                        cv.round_rect_alpha(bx, by, bw, bh, 5.0 * s, t.border, 0.5);
+                        let (btn_fill, border_alpha) = if is_open {
+                            (t.btn_bg_hover, 0.9)
+                        } else if f > 0.01 {
+                            (t.btn_bg_hover, 0.7)
+                        } else {
+                            (t.btn_bg, 0.5)
+                        };
+                        cv.round_rect(bx, by, bw, bh, 5.0 * s, btn_fill);
+                        cv.round_rect_alpha(bx, by, bw, bh, 5.0 * s, t.border, border_alpha);
 
                         // Value inside button
                         let val_x = bx + 8.0 * s;
