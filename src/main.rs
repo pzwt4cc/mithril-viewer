@@ -149,7 +149,7 @@ struct Toast {
 }
 
 enum UserEvent {
-    Printed(Result<(), String>),
+    Printed(Result<bool, String>),
     Picked(Option<PathBuf>),
     PickedFolder(Option<PathBuf>),
 }
@@ -277,6 +277,7 @@ struct App {
     clipboard: Option<arboard::Clipboard>,
     exit_requested: bool,
     picking: bool,
+    printing: bool,
     logo: Option<(u32, Vec<u32>)>,
     ratio_hover: Option<usize>,
     ratio_dirty: bool,
@@ -332,6 +333,7 @@ impl App {
             clipboard: None,
             exit_requested: false,
             picking: false,
+            printing: false,
             logo: None,
             ratio_hover: None,
             ratio_dirty: true,
@@ -1279,18 +1281,29 @@ impl App {
     }
 
     fn print(&mut self) {
+        if self.printing {
+            return;
+        }
         let Some(img) = self
             .anim
             .as_ref()
-            .map(|a| a.current())
-            .or(self.image.as_ref())
+            .map(|a| a.current().clone())
+            .or_else(|| self.image.clone())
         else {
             return;
         };
-        let img = img.clone();
+        self.close_menu();
+        self.printing = true;
         let proxy = self.proxy.clone();
+        let title = self
+            .path
+            .as_ref()
+            .and_then(|p| p.file_name())
+            .and_then(|n| n.to_str())
+            .unwrap_or("Mithril")
+            .to_string();
         std::thread::spawn(move || {
-            let res = (|| -> Result<(), String> {
+            let res = (|| -> Result<bool, String> {
                 use std::io::Write;
                 let stamp = std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
@@ -1310,18 +1323,9 @@ impl App {
                         .map_err(|e| e.to_string())?;
                     w.flush().map_err(|e| e.to_string())?;
                 }
-                let out = std::process::Command::new("lp")
-                    .arg("-o")
-                    .arg("fit-to-page")
-                    .arg(&path)
-                    .output();
+                let print_res = run_system_print(&path, &title);
                 let _ = std::fs::remove_file(&path);
-                let out = out.map_err(|e| e.to_string())?;
-                if out.status.success() {
-                    Ok(())
-                } else {
-                    Err(String::from_utf8_lossy(&out.stderr).trim().to_string())
-                }
+                print_res
             })();
             let _ = proxy.send_event(UserEvent::Printed(res));
         });
@@ -1858,15 +1862,21 @@ impl ApplicationHandler<UserEvent> for App {
                     self.open_dir(dir);
                 }
             }
-            UserEvent::Printed(Ok(())) => self.show_toast(tr("toast.print_sent").to_string()),
-            UserEvent::Printed(Err(e)) => {
-                let short: String = e.lines().next().unwrap_or("").chars().take(60).collect();
-                let msg = if short.is_empty() {
-                    tr("toast.print_failed").to_string()
-                } else {
-                    format!("{}: {short}", tr("toast.print_failed"))
-                };
-                self.show_toast(msg);
+            UserEvent::Printed(res) => {
+                self.printing = false;
+                match res {
+                    Ok(true) => self.show_toast(tr("toast.print_sent").to_string()),
+                    Ok(false) => {}
+                    Err(e) => {
+                        let short: String = e.lines().next().unwrap_or("").chars().take(60).collect();
+                        let msg = if short.is_empty() {
+                            tr("toast.print_failed").to_string()
+                        } else {
+                            format!("{}: {short}", tr("toast.print_failed"))
+                        };
+                        self.show_toast(msg);
+                    }
+                }
             }
         }
     }
@@ -2298,4 +2308,96 @@ fn main() {
     }
 
     event_loop.run_app(&mut app).unwrap();
+}
+
+fn run_system_print(path: &std::path::Path, title: &str) -> Result<bool, String> {
+    const SCRIPT: &str = r#"
+import sys
+try:
+    import gi
+    gi.require_version('Gtk', '3.0')
+    from gi.repository import Gtk, Gdk, GdkPixbuf
+except Exception:
+    sys.exit(10)
+
+path = sys.argv[1]
+title = sys.argv[2] if len(sys.argv) > 2 else 'Mithril'
+
+try:
+    pixbuf = GdkPixbuf.Pixbuf.new_from_file(path)
+except Exception as e:
+    sys.stderr.write(f"{e}\n")
+    sys.exit(1)
+
+img_w, img_h = pixbuf.get_width(), pixbuf.get_height()
+op = Gtk.PrintOperation()
+op.set_job_name(title)
+op.set_n_pages(1)
+op.set_unit(Gtk.Unit.POINTS)
+op.set_embed_page_setup(True)
+
+def on_draw_page(operation, context, page_nr):
+    cr = context.get_cairo_context()
+    pw = context.get_width()
+    ph = context.get_height()
+    scale = min(pw / img_w, ph / img_h)
+    cr.translate((pw - img_w * scale) / 2.0, (ph - img_h * scale) / 2.0)
+    cr.scale(scale, scale)
+    Gdk.cairo_set_source_pixbuf(cr, pixbuf, 0, 0)
+    cr.paint()
+
+op.connect('draw_page', on_draw_page)
+res = op.run(Gtk.PrintOperationAction.PRINT_DIALOG, None)
+
+if res == Gtk.PrintOperationResult.APPLY:
+    sys.exit(0)
+elif res == Gtk.PrintOperationResult.CANCEL:
+    sys.exit(2)
+else:
+    sys.exit(1)
+"#;
+
+    if let Ok(out) = std::process::Command::new("python3")
+        .arg("-c")
+        .arg(SCRIPT)
+        .arg(path)
+        .arg(title)
+        .output()
+    {
+        match out.status.code() {
+            Some(0) => return Ok(true),
+            Some(2) => return Ok(false),
+            Some(10) => {}
+            _ => {
+                let err = String::from_utf8_lossy(&out.stderr).trim().to_string();
+                if !err.is_empty() {
+                    return Err(err);
+                }
+            }
+        }
+    }
+
+    if let Ok(out) = std::process::Command::new("gtklp").arg(path).output() {
+        if out.status.success() {
+            return Ok(true);
+        }
+        let err = String::from_utf8_lossy(&out.stderr).trim().to_string();
+        if !err.is_empty() {
+            return Err(err);
+        }
+        return Ok(false);
+    }
+
+    let out = std::process::Command::new("lp")
+        .arg("-o")
+        .arg("fit-to-page")
+        .arg(path)
+        .output()
+        .map_err(|e| e.to_string())?;
+
+    if out.status.success() {
+        Ok(true)
+    } else {
+        Err(String::from_utf8_lossy(&out.stderr).trim().to_string())
+    }
 }
