@@ -618,7 +618,7 @@ impl App {
         config::save(&self.config);
         theme::set(mode);
         if let Some(gpu) = &mut self.gpu {
-            gpu.set_overlay(gpu::BG, &theme::bg_texture(), 64, 64);
+            gpu.set_overlay(gpu::BG, &theme::bg_texture(), 1, 1);
         }
         self.header_dirty = true;
         self.sidebar_dirty = true;
@@ -1829,7 +1829,7 @@ impl ApplicationHandler<UserEvent> for App {
 
         match Gpu::new(el, attrs) {
             Ok((window, mut gpu)) => {
-                gpu.set_overlay(gpu::BG, &theme::bg_texture(), 64, 64);
+                gpu.set_overlay(gpu::BG, &theme::bg_texture(), 1, 1);
                 gpu.set_overlay(gpu::BLACK, &[0xff00_0000], 1, 1);
                 gpu.set_overlay(gpu::WHITE, &[0xffff_ffff], 1, 1);
                 if let Some(img) = &self.image {

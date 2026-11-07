@@ -1,5 +1,5 @@
+use crate::draw::Rgb;
 use std::sync::RwLock;
-use crate::draw::{Rgb, lerp};
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum ThemeMode {
@@ -44,8 +44,7 @@ pub struct Theme {
     pub accent: Rgb,
     pub dim: Rgb,
     pub danger: Rgb,
-    pub bg_center: Rgb,
-    pub bg_edge: Rgb,
+    pub bg: Rgb,
     pub btn_bg: Rgb,
     pub btn_bg_hover: Rgb,
     pub on_accent: Rgb,
@@ -66,8 +65,7 @@ impl Theme {
         accent: [0xff, 0xff, 0xff],
         dim: [0xa3, 0xa8, 0xb1],
         danger: [0xd9, 0x4f, 0x4f],
-        bg_center: [0x37, 0x3a, 0x40],
-        bg_edge: [0x2a, 0x2c, 0x30],
+        bg: [0x28, 0x2a, 0x2f],
         btn_bg: [0x45, 0x49, 0x51],
         btn_bg_hover: [0x55, 0x5a, 0x64],
         on_accent: [0x1c, 0x1f, 0x26],
@@ -87,8 +85,7 @@ impl Theme {
         accent: [0xff, 0xff, 0xff],
         dim: [0x8a, 0x8f, 0x99],
         danger: [0xed, 0x55, 0x55],
-        bg_center: [0x18, 0x19, 0x1c],
-        bg_edge: [0x0e, 0x0f, 0x11],
+        bg: [0x12, 0x13, 0x16],
         btn_bg: [0x2a, 0x2b, 0x30],
         btn_bg_hover: [0x37, 0x39, 0x40],
         on_accent: [0x12, 0x13, 0x16],
@@ -108,8 +105,7 @@ impl Theme {
         accent: [0x20, 0x23, 0x29],
         dim: [0x6e, 0x74, 0x80],
         danger: [0xd6, 0x38, 0x38],
-        bg_center: [0xf2, 0xf4, 0xf7],
-        bg_edge: [0xe2, 0xe5, 0xe9],
+        bg: [0xec, 0xef, 0xf4],
         btn_bg: [0xe8, 0xeb, 0xf0],
         btn_bg_hover: [0xdc, 0xe0, 0xe6],
         on_accent: [0xff, 0xff, 0xff],
@@ -155,24 +151,34 @@ fn detect_system_dark() -> Option<bool> {
         }
     }
 
+    if let Ok(colorfgbg) = std::env::var("COLORFGBG") {
+        let parts: Vec<&str> = colorfgbg.split(';').collect();
+        if let Some(bg) = parts.last() {
+            if let Ok(val) = bg.parse::<u32>() {
+                if val < 8 {
+                    return Some(true);
+                } else {
+                    return Some(false);
+                }
+            }
+        }
+    }
+
     None
 }
 
-fn resolve(mode: ThemeMode) -> Theme {
-    match mode {
+pub fn resolve(mode: ThemeMode) -> Theme {
+    let mut t = match mode {
         ThemeMode::Neutral => Theme::NEUTRAL,
         ThemeMode::Dark => Theme::DARK,
         ThemeMode::Light => Theme::LIGHT,
-        ThemeMode::System => {
-            let mut t = match detect_system_dark() {
-                Some(true) => Theme::DARK,
-                Some(false) => Theme::LIGHT,
-                None => Theme::NEUTRAL,
-            };
-            t.mode = ThemeMode::System;
-            t
-        }
-    }
+        ThemeMode::System => match detect_system_dark() {
+            Some(true) | None => Theme::DARK,
+            Some(false) => Theme::LIGHT,
+        },
+    };
+    t.mode = mode;
+    t
 }
 
 static CURRENT: RwLock<Theme> = RwLock::new(Theme::NEUTRAL);
@@ -192,21 +198,9 @@ pub fn current() -> Theme {
     *CURRENT.read().unwrap()
 }
 
-pub fn bg_texture() -> Vec<u32> {
-    const N: usize = 64;
+pub fn bg_texture() -> [u32; 1] {
     let t = current();
-    let (center, edge) = (t.bg_center, t.bg_edge);
-    let mut v = Vec::with_capacity(N * N);
-    for y in 0..N {
-        for x in 0..N {
-            let nx = (x as f32 + 0.5) / N as f32 * 2.0 - 1.0;
-            let ny = (y as f32 + 0.5) / N as f32 * 2.0 - 1.0;
-            let dist = ((nx * nx + ny * ny).sqrt() / 1.25).clamp(0.0, 1.0);
-            let c = lerp(center, edge, dist * dist * (3.0 - 2.0 * dist));
-            v.push(0xff00_0000 | (c[0] as u32) << 16 | (c[1] as u32) << 8 | c[2] as u32);
-        }
-    }
-    v
+    [0xff00_0000 | (t.bg[0] as u32) << 16 | (t.bg[1] as u32) << 8 | (t.bg[2] as u32)]
 }
 
 #[cfg(test)]
@@ -226,5 +220,8 @@ mod tests {
         set(ThemeMode::Dark);
         assert_eq!(current().mode, ThemeMode::Dark);
         assert!(!current().is_light);
+
+        set(ThemeMode::System);
+        assert_eq!(current().mode, ThemeMode::System);
     }
 }
