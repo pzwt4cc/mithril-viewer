@@ -421,7 +421,8 @@ impl App {
             .map(|d| d.to_path_buf());
         std::thread::spawn(move || {
             let mut dlg = rfd::FileDialog::new()
-                .add_filter("Images", &["png", "jpg", "jpeg", "gif", "webp", "bmp", "svg", "svgz"]);
+                .add_filter("Images", &["png", "jpg", "jpeg", "gif", "webp", "bmp", "svg", "svgz"])
+                .add_filter("All Files", &["*"]);
             if let Some(dir) = start {
                 dlg = dlg.set_directory(dir);
             }
@@ -1736,6 +1737,8 @@ impl App {
                 (vx, vy, vw, vh),
                 self.appear.v,
                 self.angle.v,
+                self.src.map(|s| s.has_alpha).unwrap_or(false),
+                theme::current().is_light,
             );
         }
         if let Some((c, im)) = crop_scr {

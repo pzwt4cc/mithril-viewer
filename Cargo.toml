@@ -8,6 +8,7 @@ readme = "README.md"
 
 [dependencies]
 arboard = { version = "3.7.0", features = ["wayland-data-control"] }
+flate2 = "1.0"
 fontdue = "0.9.5"
 glow = "0.18.0"
 glutin = "0.32"

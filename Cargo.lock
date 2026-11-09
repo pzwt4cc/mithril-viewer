@@ -1045,6 +1045,7 @@ name = "mithril-viewer"
 version = "0.1.0"
 dependencies = [
  "arboard",
+ "flate2",
  "fontdue",
  "glow",
  "glutin",

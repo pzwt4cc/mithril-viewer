@@ -57,10 +57,20 @@ uniform sampler2D u_tex;
 uniform float u_alpha;
 uniform vec2 u_res;
 uniform float u_corner;
+uniform float u_checker;
+uniform vec3 u_chk0;
+uniform vec3 u_chk1;
 in vec2 v_uv;
 out vec4 o_color;
 void main() {
     vec4 c = texture(u_tex, v_uv);
+    if (u_checker > 0.5) {
+        uvec2 grid = uvec2(gl_FragCoord.xy) / 12u;
+        float check = float((grid.x + grid.y) & 1u);
+        vec3 chk = mix(u_chk0, u_chk1, check);
+        c.rgb = mix(chk, c.rgb, c.a);
+        c.a = 1.0;
+    }
     float a = c.a * u_alpha;
     if (u_corner > 0.0) {
         vec2 p = vec2(gl_FragCoord.x, u_res.y - gl_FragCoord.y) - 0.5 * u_res;
@@ -89,6 +99,9 @@ pub struct Gpu {
     u_alpha: Option<glow::UniformLocation>,
     u_angle: Option<glow::UniformLocation>,
     u_corner: Option<glow::UniformLocation>,
+    u_checker: Option<glow::UniformLocation>,
+    u_chk0: Option<glow::UniformLocation>,
+    u_chk1: Option<glow::UniformLocation>,
     max_tex: u32,
     win: (u32, u32),
     image: Option<Tex>,
@@ -151,7 +164,7 @@ impl Gpu {
 
         let gl =
             unsafe { glow::Context::from_loader_function_cstr(|s| display.get_proc_address(s)) };
-        let (program, vao, u_rect, u_res, u_alpha, u_angle, u_corner, max_tex) = unsafe {
+        let (program, vao, u_rect, u_res, u_alpha, u_angle, u_corner, u_checker, u_chk0, u_chk1, max_tex) = unsafe {
             let program = build_program(&gl)?;
             let vao = gl.create_vertex_array()?;
             let u_rect = gl.get_uniform_location(program, "u_rect");
@@ -159,9 +172,12 @@ impl Gpu {
             let u_alpha = gl.get_uniform_location(program, "u_alpha");
             let u_angle = gl.get_uniform_location(program, "u_angle");
             let u_corner = gl.get_uniform_location(program, "u_corner");
+            let u_checker = gl.get_uniform_location(program, "u_checker");
+            let u_chk0 = gl.get_uniform_location(program, "u_chk0");
+            let u_chk1 = gl.get_uniform_location(program, "u_chk1");
             let max_tex = gl.get_parameter_i32(glow::MAX_TEXTURE_SIZE).max(1024) as u32;
             (
-                program, vao, u_rect, u_res, u_alpha, u_angle, u_corner, max_tex,
+                program, vao, u_rect, u_res, u_alpha, u_angle, u_corner, u_checker, u_chk0, u_chk1, max_tex,
             )
         };
 
@@ -176,6 +192,9 @@ impl Gpu {
             u_alpha,
             u_angle,
             u_corner,
+            u_checker,
+            u_chk0,
+            u_chk1,
             max_tex,
             win: (1, 1),
             image: None,
@@ -263,6 +282,8 @@ impl Gpu {
         clip: (i32, i32, u32, u32),
         alpha: f32,
         angle: f32,
+        checker: bool,
+        is_light: bool,
     ) {
         let Some(tex) = &self.image else { return };
         unsafe {
@@ -273,9 +294,32 @@ impl Gpu {
                 clip.2 as i32,
                 clip.3 as i32,
             );
+            if checker {
+                self.gl.uniform_1_f32(self.u_checker.as_ref(), 1.0);
+                if is_light {
+                    self.gl
+                        .uniform_3_f32(self.u_chk0.as_ref(), 0.86, 0.88, 0.92);
+                    self.gl
+                        .uniform_3_f32(self.u_chk1.as_ref(), 0.94, 0.95, 0.98);
+                } else {
+                    self.gl
+                        .uniform_3_f32(self.u_chk0.as_ref(), 0.18, 0.20, 0.24);
+                    self.gl
+                        .uniform_3_f32(self.u_chk1.as_ref(), 0.24, 0.26, 0.31);
+                }
+            } else {
+                self.gl.uniform_1_f32(self.u_checker.as_ref(), 0.0);
+            }
+            self.gl.bind_texture(glow::TEXTURE_2D, Some(tex.id));
+            self.gl
+                .uniform_4_f32(self.u_rect.as_ref(), rect.0, rect.1, rect.2, rect.3);
+            self.gl.uniform_1_f32(self.u_alpha.as_ref(), alpha);
+            self.gl.uniform_1_f32(self.u_angle.as_ref(), angle);
+            self.gl.uniform_1_f32(self.u_checker.as_ref(), 0.0);
+            self.gl.draw_arrays(glow::TRIANGLE_STRIP, 0, 4);
+            self.gl.uniform_1_f32(self.u_checker.as_ref(), 0.0);
+            self.gl.disable(glow::SCISSOR_TEST);
         }
-        self.quad(tex, rect, alpha, angle);
-        unsafe { self.gl.disable(glow::SCISSOR_TEST) };
     }
 
     pub fn draw_overlay(&self, slot: usize, x: i32, y: i32, alpha: f32) {
