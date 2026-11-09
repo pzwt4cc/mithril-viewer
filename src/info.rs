@@ -45,7 +45,17 @@ impl Info {
             Some(ImageFormat::WebP) => "WebP".to_string(),
             Some(ImageFormat::Bmp) => "BMP".to_string(),
             Some(other) => format!("{other:?}"),
-            None => tr("info.unknown").to_string(),
+            None => {
+                let ext = path
+                    .extension()
+                    .and_then(|e| e.to_str())
+                    .unwrap_or_default();
+                if ext.eq_ignore_ascii_case("svg") || ext.eq_ignore_ascii_case("svgz") {
+                    "SVG".to_string()
+                } else {
+                    tr("info.unknown").to_string()
+                }
+            }
         };
         if has_alpha {
             fmt = format!("{fmt}, {}", tr("info.transparent"));

@@ -7,8 +7,8 @@
   <summary>Fast, minimal image viewer</summary>
   <summary xml:lang="ru">Быстрый минималистичный просмотрщик изображений</summary>
   <description>
-    <p>Mithril Viewer is a lightweight, GPU-accelerated image viewer in the spirit of GNOME Loupe. It opens PNG, JPEG, GIF, WebP and BMP files, supports animated images, smooth zooming, rotation, cropping, copying to the clipboard and printing.</p>
-    <p xml:lang="ru">Mithril Viewer — лёгкий просмотрщик изображений с GPU-ускорением в духе GNOME Loupe. Открывает PNG, JPEG, GIF, WebP и BMP, поддерживает анимацию, плавный зум, поворот, обрезку, копирование в буфер обмена и печать.</p>
+    <p>Mithril Viewer is a lightweight, GPU-accelerated image viewer in the spirit of GNOME Loupe. It opens PNG, JPEG, GIF, WebP, BMP and SVG files, supports animated images, smooth zooming, rotation, cropping, copying to the clipboard and printing.</p>
+    <p xml:lang="ru">Mithril Viewer — лёгкий просмотрщик изображений с GPU-ускорением в духе GNOME Loupe. Открывает PNG, JPEG, GIF, WebP, BMP и SVG, поддерживает анимацию, плавный зум, поворот, обрезку, копирование в буфер обмена и печать.</p>
   </description>
   <launchable type="desktop-id">mithril-viewer.desktop</launchable>
   <provides>

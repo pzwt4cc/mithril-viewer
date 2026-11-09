@@ -20,7 +20,7 @@ English · [Русский](README.ru.md)
 
 ## Features
 
-- **Formats:** PNG, JPEG, GIF, WebP, BMP, including animated images
+- **Formats:** PNG, JPEG, GIF, WebP, BMP, SVG, including animated images
 - **Smooth zoom and pan:** mouse wheel zooms at the cursor, drag to move
 - **Edit:** rotate, crop with a visual selection, copy to clipboard
 - **Browse a folder:** switch between images next to the opened one

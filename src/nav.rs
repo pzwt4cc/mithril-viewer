@@ -44,7 +44,7 @@ pub fn natural_cmp(a: &str, b: &str) -> Ordering {
 }
 
 pub fn first_image(dir: &std::path::Path) -> Option<PathBuf> {
-    const EXT: [&str; 6] = ["png", "jpg", "jpeg", "gif", "webp", "bmp"];
+    const EXT: [&str; 8] = ["png", "jpg", "jpeg", "gif", "webp", "bmp", "svg", "svgz"];
     std::fs::read_dir(dir)
         .ok()?
         .filter_map(|e| e.ok())

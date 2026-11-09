@@ -3,8 +3,7 @@ use crate::{
     draw::{Canvas, Rgb, lerp, text_width, wrap},
     fonts::Fonts,
     i18n::tr,
-    surface,
-    theme,
+    surface, theme,
 };
 
 type Rect = (f32, f32, f32, f32);
@@ -30,7 +29,15 @@ fn draw_button(
     let acc = t.accent;
     let fill = match (primary, hover) {
         (true, false) => acc,
-        (true, true) => lerp(acc, if t.is_light { [0, 0, 0] } else { [255, 255, 255] }, 0.2),
+        (true, true) => lerp(
+            acc,
+            if t.is_light {
+                [0, 0, 0]
+            } else {
+                [255, 255, 255]
+            },
+            0.2,
+        ),
         (false, false) => t.btn_bg,
         (false, true) => t.btn_bg_hover,
     };
@@ -284,55 +291,103 @@ impl CropBar {
 
         let t = theme::current();
         let px = 13.5 * s;
-        let dark_box: Rgb = if t.is_light { [0xf0, 0xf2, 0xf6] } else { t.btn_bg };
+        let dark_box: Rgb = if t.is_light {
+            [0xf0, 0xf2, 0xf6]
+        } else {
+            t.btn_bg
+        };
         let edit_border: Rgb = t.border;
 
         let val_w = if self.editing == Some(CropField::W) {
             &self.buf_w
         } else {
-            self.label.split_once('×').map(|(w, _)| w.trim()).unwrap_or("")
+            self.label
+                .split_once('×')
+                .map(|(w, _)| w.trim())
+                .unwrap_or("")
         };
         let val_h = if self.editing == Some(CropField::H) {
             &self.buf_h
         } else {
-            self.label.split_once('×').map(|(_, h)| h.trim()).unwrap_or("")
+            self.label
+                .split_once('×')
+                .map(|(_, h)| h.trim())
+                .unwrap_or("")
         };
 
         let r = R_BTN * s;
-        // Draw Width input box
         let (wx, wy, ww, wh) = self.rect_w;
         if self.editing == Some(CropField::W) {
-            cv.round_rect(wx - 1.0 * s, wy - 1.0 * s, ww + 2.0 * s, wh + 2.0 * s, r + 1.0 * s, t.accent);
+            cv.round_rect(
+                wx - 1.0 * s,
+                wy - 1.0 * s,
+                ww + 2.0 * s,
+                wh + 2.0 * s,
+                r + 1.0 * s,
+                t.accent,
+            );
             cv.round_rect(wx, wy, ww, wh, r, dark_box);
         } else {
             cv.round_rect(wx, wy, ww, wh, r, edit_border);
-            cv.round_rect(wx + 1.0 * s, wy + 1.0 * s, ww - 2.0 * s, wh - 2.0 * s, r - 1.0 * s, dark_box);
+            cv.round_rect(
+                wx + 1.0 * s,
+                wy + 1.0 * s,
+                ww - 2.0 * s,
+                wh - 2.0 * s,
+                r - 1.0 * s,
+                dark_box,
+            );
         }
 
-        // Draw Height input box
         let (hx, hy, hw, hh) = self.rect_h;
         if self.editing == Some(CropField::H) {
-            cv.round_rect(hx - 1.0 * s, hy - 1.0 * s, hw + 2.0 * s, hh + 2.0 * s, r + 1.0 * s, t.accent);
+            cv.round_rect(
+                hx - 1.0 * s,
+                hy - 1.0 * s,
+                hw + 2.0 * s,
+                hh + 2.0 * s,
+                r + 1.0 * s,
+                t.accent,
+            );
             cv.round_rect(hx, hy, hw, hh, r, dark_box);
         } else {
             cv.round_rect(hx, hy, hw, hh, r, edit_border);
-            cv.round_rect(hx + 1.0 * s, hy + 1.0 * s, hw - 2.0 * s, hh - 2.0 * s, r - 1.0 * s, dark_box);
+            cv.round_rect(
+                hx + 1.0 * s,
+                hy + 1.0 * s,
+                hw - 2.0 * s,
+                hh - 2.0 * s,
+                r - 1.0 * s,
+                dark_box,
+            );
         }
 
         if let Some(lm) = font.horizontal_line_metrics(px) {
             let baseline = self.h as f32 / 2.0 + (lm.ascent + lm.descent) / 2.0;
 
-            // text for W
             let tw = text_width(font, val_w, px);
-            cv.text(font, val_w, self.rect_w.0 + (self.rect_w.2 - tw) / 2.0, baseline, px, t.text);
+            cv.text(
+                font,
+                val_w,
+                self.rect_w.0 + (self.rect_w.2 - tw) / 2.0,
+                baseline,
+                px,
+                t.text,
+            );
 
-            // separator "×"
-            let times_x = (self.rect_w.0 + self.rect_w.2 + self.rect_h.0) / 2.0 - text_width(font, "×", px) / 2.0;
+            let times_x = (self.rect_w.0 + self.rect_w.2 + self.rect_h.0) / 2.0
+                - text_width(font, "×", px) / 2.0;
             cv.text(font, "×", times_x, baseline, px, t.dim);
 
-            // text for H
             let th = text_width(font, val_h, px);
-            cv.text(font, val_h, self.rect_h.0 + (self.rect_h.2 - th) / 2.0, baseline, px, t.text);
+            cv.text(
+                font,
+                val_h,
+                self.rect_h.0 + (self.rect_h.2 - th) / 2.0,
+                baseline,
+                px,
+                t.text,
+            );
         }
 
         for (i, (label, action, r)) in self.buttons.iter().enumerate() {

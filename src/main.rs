@@ -1,19 +1,19 @@
-mod theme;
 mod anim;
 mod config;
+mod crop;
 mod draw;
 mod fonts;
 mod gpu;
 mod i18n;
 mod info;
+mod layout;
 mod loader;
 mod menu;
 mod modal;
-mod crop;
 mod nav;
-mod view;
-mod layout;
+mod theme;
 mod ui;
+mod view;
 
 use std::{
     borrow::Cow,
@@ -36,18 +36,21 @@ use winit::{
 
 use anim::Anim;
 use config::{Config, DeleteMode};
+use crop::{
+    Crop, Drag, Handle, PRESETS, Preset, drag_rect, draw_crop, draw_ratios, handle_icon,
+    lock_ratio, ratio_rect,
+};
 use draw::{Canvas, ellipsize, text_width};
 use fonts::Fonts;
 use gpu::Gpu;
 use i18n::tr;
-use crop::{Crop, Drag, Handle, PRESETS, Preset, drag_rect, draw_crop, draw_ratios, handle_icon, lock_ratio, ratio_rect};
 use info::Info;
-use layout::{EDGE, Hit, Layout, LOGO_S, START_H, START_W};
+use layout::{EDGE, Hit, LOGO_S, Layout, START_H, START_W};
 use menu::{Action, Menu};
-use ui::{draw_header, draw_sidebar, draw_start};
-use nav::first_image;
-use view::{View, fit_scale};
 use modal::{BarAction, CropBar, CropField, Dialog, DialogAction};
+use nav::first_image;
+use ui::{draw_header, draw_sidebar, draw_start};
+use view::{View, fit_scale};
 
 const APP_ID: &str = "mithril-viewer";
 
@@ -60,7 +63,6 @@ fn window_icon() -> Option<Icon> {
     let (w, h) = img.dimensions();
     Icon::from_rgba(img.into_raw(), w, h).ok()
 }
-
 
 const R_WINDOW: f32 = 14.0;
 pub const R_PILL: f32 = 9.0;
@@ -91,7 +93,6 @@ pub fn surface(cv: &mut Canvas, x: f32, y: f32, w: f32, h: f32, r: f32, s: f32) 
         t.surf_bot,
     );
 }
-
 
 #[derive(Clone, Copy)]
 pub struct Fade {
@@ -137,16 +138,12 @@ enum After {
     Open(PathBuf),
 }
 
-
 #[derive(Clone, Copy)]
 struct Source {
     dims: (u32, u32),
     format: Option<ImageFormat>,
     has_alpha: bool,
 }
-
-
-
 
 fn logo_pixels(size: u32) -> Vec<u32> {
     let Ok(img) = image::load_from_memory_with_format(ICON_PNG, ImageFormat::Png) else {
@@ -173,7 +170,6 @@ fn logo_pixels(size: u32) -> Vec<u32> {
         .collect()
 }
 
-
 fn is_nav_key(k: PhysicalKey) -> bool {
     matches!(
         k,
@@ -182,7 +178,6 @@ fn is_nav_key(k: PhysicalKey) -> bool {
         )
     )
 }
-
 
 fn edge_dir(p: (f64, f64), win: (u32, u32), b: f64) -> Option<ResizeDirection> {
     use ResizeDirection::*;
@@ -213,8 +208,6 @@ fn dir_icon(d: ResizeDirection) -> CursorIcon {
         ResizeDirection::West => CursorIcon::WResize,
     }
 }
-
-
 
 struct App {
     font: Fonts,
@@ -428,7 +421,7 @@ impl App {
             .map(|d| d.to_path_buf());
         std::thread::spawn(move || {
             let mut dlg = rfd::FileDialog::new()
-                .add_filter("Images", &["png", "jpg", "jpeg", "gif", "webp", "bmp"]);
+                .add_filter("Images", &["png", "jpg", "jpeg", "gif", "webp", "bmp", "svg", "svgz"]);
             if let Some(dir) = start {
                 dlg = dlg.set_directory(dir);
             }
@@ -962,7 +955,9 @@ impl App {
     }
 
     fn commit_crop_field(&mut self) {
-        let Some((iw, ih)) = self.image.as_ref().map(|im| im.dimensions()) else { return };
+        let Some((iw, ih)) = self.image.as_ref().map(|im| im.dimensions()) else {
+            return;
+        };
         let Some(c) = &mut self.crop else { return };
         let cur_w = (c.rect[2] - c.rect[0]).round().max(1.0) as u32;
         let cur_h = (c.rect[3] - c.rect[1]).round().max(1.0) as u32;
@@ -973,14 +968,16 @@ impl App {
         let x0 = (cx - new_w as f32 / 2.0).clamp(0.0, (iw - new_w) as f32);
         let y0 = (cy - new_h as f32 / 2.0).clamp(0.0, (ih - new_h) as f32);
         c.rect = [x0, y0, x0 + new_w as f32, y0 + new_h as f32];
-        c.preset = 0; // custom dimensions switch preset to Free
+        c.preset = 0;
         c.bar.editing = None;
         c.bar_dirty = true;
         self.redraw();
     }
 
     fn perform_crop(&mut self) -> bool {
-        let Some(c) = self.crop.take() else { return false };
+        let Some(c) = self.crop.take() else {
+            return false;
+        };
         let Some(img) = self.image.as_ref() else {
             return false;
         };
@@ -1329,16 +1326,20 @@ impl App {
         });
     }
 
-
-
     fn draw_ratios(&self, cv: &mut Canvas, lay: &Layout) {
         let Some(c) = &self.crop else { return };
         let (x, y, w, h, _) = lay.ratio_panel();
         let rows = (0..PRESETS.len()).map(|i| (i, lay.ratio_row(i)));
-        draw_ratios(cv, &self.font, c, (x, y, w, h), rows, self.ratio_hover, lay.scale);
+        draw_ratios(
+            cv,
+            &self.font,
+            c,
+            (x, y, w, h),
+            rows,
+            self.ratio_hover,
+            lay.scale,
+        );
     }
-
-
 
     fn render(&mut self) {
         let now = Instant::now();
@@ -1385,7 +1386,11 @@ impl App {
                 busy = true;
             }
         }
-        if self.crop.as_ref().is_some_and(|c| c.canceling && c.appear.v <= 0.003) {
+        if self
+            .crop
+            .as_ref()
+            .is_some_and(|c| c.canceling && c.appear.v <= 0.003)
+        {
             self.crop = None;
             busy = true;
         }
@@ -1526,7 +1531,14 @@ impl App {
                     surface(&mut cv, pad, pad, fw, fh, R_PILL * s, s);
                     if let Some(lm) = self.font.horizontal_line_metrics(px) {
                         let baseline = pad + fh / 2.0 + (lm.ascent + lm.descent) / 2.0;
-                        cv.text(&self.font, &text, pad + (fw - tw) / 2.0, baseline, px, theme::current().text);
+                        cv.text(
+                            &self.font,
+                            &text,
+                            pad + (fw - tw) / 2.0,
+                            baseline,
+                            px,
+                            theme::current().text,
+                        );
                     }
                 }
                 toast_buf = Some((tb, bw, bh));
@@ -1737,7 +1749,12 @@ impl App {
         let h_alpha = 1.0 - self.header_hide.v;
         if lay.sidebar_w > 0 && h_alpha > 0.001 {
             let s_shift = (self.header_hide.v * lay.sidebar_w as f32).round() as i32;
-            gpu.draw_overlay(gpu::SIDEBAR, w as i32 - lay.sidebar_w + s_shift, lay.side_oy(), h_alpha);
+            gpu.draw_overlay(
+                gpu::SIDEBAR,
+                w as i32 - lay.sidebar_w + s_shift,
+                lay.side_oy(),
+                h_alpha,
+            );
         }
         if h_alpha > 0.001 {
             let h_lift = -((self.header_hide.v * lay.top_h as f32).round() as i32);
@@ -1747,7 +1764,8 @@ impl App {
         if let (Some((rw, _, rx, ry)), Some(c)) = (ratio_rect, &self.crop) {
             let t = 1.0 - c.appear.v;
             let travel = (vx + vw as i32 - rx) as f32;
-            let shift = (t * travel.max(rw as f32) + self.drag_hide.v * travel.max(rw as f32)).round() as i32;
+            let shift = (t * travel.max(rw as f32) + self.drag_hide.v * travel.max(rw as f32))
+                .round() as i32;
             let a = c.appear.v * drag_alpha;
             if a > 0.001 {
                 gpu.draw_overlay(gpu::RATIOS, rx + shift, ry, a);
@@ -1756,7 +1774,8 @@ impl App {
         if let Some(c) = &self.crop {
             let (bx, by) = c.bar.origin((vx, vy, vw, vh));
             let pad = c.bar.pad();
-            let lift = (((1.0 - c.appear.v) * 18.0 + self.drag_hide.v * 36.0) * lay.scale).round() as i32;
+            let lift =
+                (((1.0 - c.appear.v) * 18.0 + self.drag_hide.v * 36.0) * lay.scale).round() as i32;
             let a = c.appear.v * drag_alpha;
             if a > 0.001 {
                 gpu.draw_overlay(gpu::BAR, bx - pad, by - pad + lift, a);
@@ -1866,7 +1885,8 @@ impl ApplicationHandler<UserEvent> for App {
                     Ok(true) => self.show_toast(tr("toast.print_sent").to_string()),
                     Ok(false) => {}
                     Err(e) => {
-                        let short: String = e.lines().next().unwrap_or("").chars().take(60).collect();
+                        let short: String =
+                            e.lines().next().unwrap_or("").chars().take(60).collect();
                         let msg = if short.is_empty() {
                             tr("toast.print_failed").to_string()
                         } else {
@@ -1908,13 +1928,12 @@ impl ApplicationHandler<UserEvent> for App {
                 self.shift = m.state().shift_key();
                 self.ctrl = m.state().control_key();
             }
-            WindowEvent::KeyboardInput { event, .. }
-                if event.state.is_pressed() =>
-            {
+            WindowEvent::KeyboardInput { event, .. } if event.state.is_pressed() => {
                 if let Some(c) = &mut self.crop {
                     if let Some(field) = c.bar.editing {
                         if let Some(txt) = event.text.as_ref() {
-                            let digits: String = txt.chars().filter(|ch| ch.is_ascii_digit()).collect();
+                            let digits: String =
+                                txt.chars().filter(|ch| ch.is_ascii_digit()).collect();
                             if !digits.is_empty() {
                                 let buf = match field {
                                     CropField::W => &mut c.bar.buf_w,

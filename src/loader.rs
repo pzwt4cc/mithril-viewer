@@ -3,6 +3,7 @@ use std::{
     fs::File,
     io::BufReader,
     path::{Path, PathBuf},
+    sync::{Arc, LazyLock},
     time::Duration,
 };
 
@@ -22,12 +23,78 @@ pub struct Loaded {
     pub anim: Option<Anim>,
 }
 
+static FONT_DB: LazyLock<Arc<resvg::usvg::fontdb::Database>> = LazyLock::new(|| {
+    let mut fontdb = resvg::usvg::fontdb::Database::new();
+    fontdb.load_system_fonts();
+    Arc::new(fontdb)
+});
+
+fn load_svg(path: &Path) -> Result<Loaded, Box<dyn Error>> {
+    let data = std::fs::read(path)?;
+    let opt = resvg::usvg::Options {
+        fontdb: FONT_DB.clone(),
+        ..Default::default()
+    };
+    let tree = resvg::usvg::Tree::from_data(&data, &opt)?;
+    let size = tree.size();
+    let (w, h) = (
+        (size.width().ceil() as u32).max(1),
+        (size.height().ceil() as u32).max(1),
+    );
+    let mut pixmap =
+        resvg::tiny_skia::Pixmap::new(w, h).ok_or("Failed to allocate pixel buffer for SVG")?;
+    resvg::render(
+        &tree,
+        resvg::tiny_skia::Transform::default(),
+        &mut pixmap.as_mut(),
+    );
+    let mut raw = pixmap.take();
+    let mut has_alpha = false;
+    for pixel in raw.chunks_exact_mut(4) {
+        let a = pixel[3] as u32;
+        if a < 255 {
+            has_alpha = true;
+            if a > 0 {
+                pixel[0] = ((pixel[0] as u32 * 255 + a / 2) / a).min(255) as u8;
+                pixel[1] = ((pixel[1] as u32 * 255 + a / 2) / a).min(255) as u8;
+                pixel[2] = ((pixel[2] as u32 * 255 + a / 2) / a).min(255) as u8;
+            }
+        }
+    }
+    let image =
+        RgbaImage::from_raw(w, h, raw).ok_or("Failed to construct RGBA image from SVG buffer")?;
+    Ok(Loaded {
+        image,
+        format: None,
+        has_alpha,
+        anim: None,
+    })
+}
+
 pub fn load(path: &Path) -> Result<Loaded, Box<dyn Error>> {
-    let reader = ImageReader::open(path)?.with_guessed_format()?;
+    let is_svg = path
+        .extension()
+        .and_then(|e| e.to_str())
+        .is_some_and(|e| e.eq_ignore_ascii_case("svg") || e.eq_ignore_ascii_case("svgz"));
+
+    if is_svg {
+        return load_svg(path);
+    }
+
+    let reader = match ImageReader::open(path)?.with_guessed_format() {
+        Ok(r) => r,
+        Err(_) => return load_svg(path),
+    };
     let format = reader.format();
 
     if format == Some(ImageFormat::Gif) {
         if let Some(loaded) = load_gif(path)? {
+            return Ok(loaded);
+        }
+    }
+
+    if format.is_none() {
+        if let Ok(loaded) = load_svg(path) {
             return Ok(loaded);
         }
     }
@@ -79,7 +146,7 @@ fn load_gif(path: &Path) -> Result<Option<Loaded>, Box<dyn Error>> {
     }))
 }
 
-const EXTENSIONS: &[&str] = &["jpg", "jpeg", "png", "gif", "webp", "bmp"];
+const EXTENSIONS: &[&str] = &["jpg", "jpeg", "png", "gif", "webp", "bmp", "svg", "svgz"];
 
 fn is_supported(path: &Path) -> bool {
     path.extension()
@@ -132,4 +199,16 @@ pub fn siblings(path: &Path) -> (Vec<PathBuf>, usize) {
             list.len() - 1
         });
     (list, index)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_load_svg() {
+        let loaded = load(Path::new("assets/logo.svg")).expect("failed to load svg");
+        assert!(loaded.image.width() > 0);
+        assert!(loaded.image.height() > 0);
+    }
 }
