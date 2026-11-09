@@ -8,6 +8,10 @@ use crate::config::parse_pairs;
 const BUNDLED: &[(&str, &str)] = &[
     ("en", include_str!("../lang/en.txt")),
     ("ru", include_str!("../lang/ru.txt")),
+    ("uk", include_str!("../lang/uk.txt")),
+    ("de", include_str!("../lang/de.txt")),
+    ("fr", include_str!("../lang/fr.txt")),
+    ("es", include_str!("../lang/es.txt")),
 ];
 
 type Table = HashMap<&'static str, &'static str>;
@@ -64,12 +68,28 @@ pub fn available() -> Vec<(&'static str, &'static str)> {
 
 pub fn tr(key: &'static str) -> &'static str {
     if let Some(t) = CURRENT.read().unwrap().as_ref()
-        && let Some(v) = t.get(key) {
-            return v;
-        }
+        && let Some(v) = t.get(key)
+    {
+        return v;
+    }
     ENGLISH
         .get()
         .and_then(|t| t.get(key))
         .copied()
         .unwrap_or(key)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_all_languages_loaded() {
+        assert_eq!(available().len(), 6);
+        for (code, _) in available() {
+            let t = table(code).expect("failed to load table");
+            assert!(t.contains_key("lang.name"));
+            assert!(t.contains_key("menu.reset_zoom"));
+        }
+    }
 }
