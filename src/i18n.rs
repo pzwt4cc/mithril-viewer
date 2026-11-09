@@ -26,7 +26,7 @@ fn detect() -> Option<String> {
     for var in ["LC_ALL", "LC_MESSAGES", "LANGUAGE", "LANG"] {
         if let Ok(v) = std::env::var(var) {
             let code = v
-                .split(|c| c == '_' || c == '.' || c == '@' || c == ':')
+                .split(['_', '.', '@', ':'])
                 .next()
                 .unwrap_or("")
                 .to_lowercase();
@@ -63,11 +63,10 @@ pub fn available() -> Vec<(&'static str, &'static str)> {
 }
 
 pub fn tr(key: &'static str) -> &'static str {
-    if let Some(t) = CURRENT.read().unwrap().as_ref() {
-        if let Some(v) = t.get(key) {
-            return *v;
+    if let Some(t) = CURRENT.read().unwrap().as_ref()
+        && let Some(v) = t.get(key) {
+            return v;
         }
-    }
     ENGLISH
         .get()
         .and_then(|t| t.get(key))

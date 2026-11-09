@@ -126,8 +126,7 @@ fn detect_system_dark() -> Option<bool> {
             "color-scheme",
         ])
         .output()
-    {
-        if out.status.success() {
+        && out.status.success() {
             let s = String::from_utf8_lossy(&out.stdout);
             if s.contains("u 1") {
                 return Some(true);
@@ -135,13 +134,11 @@ fn detect_system_dark() -> Option<bool> {
                 return Some(false);
             }
         }
-    }
 
     if let Ok(out) = std::process::Command::new("gsettings")
         .args(["get", "org.gnome.desktop.interface", "color-scheme"])
         .output()
-    {
-        if out.status.success() {
+        && out.status.success() {
             let s = String::from_utf8_lossy(&out.stdout).to_lowercase();
             if s.contains("dark") {
                 return Some(true);
@@ -149,19 +146,17 @@ fn detect_system_dark() -> Option<bool> {
                 return Some(false);
             }
         }
-    }
 
     if let Ok(colorfgbg) = std::env::var("COLORFGBG") {
         let parts: Vec<&str> = colorfgbg.split(';').collect();
-        if let Some(bg) = parts.last() {
-            if let Ok(val) = bg.parse::<u32>() {
+        if let Some(bg) = parts.last()
+            && let Ok(val) = bg.parse::<u32>() {
                 if val < 8 {
                     return Some(true);
                 } else {
                     return Some(false);
                 }
             }
-        }
     }
 
     None

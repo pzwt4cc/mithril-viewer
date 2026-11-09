@@ -89,11 +89,10 @@ impl Fonts {
         if let Some(i) = self.system_font_for(ch) {
             return (i, ch);
         }
-        if let Some(a) = fold(ch) {
-            if self.primary.lookup_glyph_index(a) != 0 {
+        if let Some(a) = fold(ch)
+            && self.primary.lookup_glyph_index(a) != 0 {
                 return (0, a);
             }
-        }
         (0, ch)
     }
 

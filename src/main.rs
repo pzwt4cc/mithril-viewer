@@ -466,13 +466,11 @@ impl App {
         self.close_menu();
         if self.open_path(first) {
             self.rescan();
-            if self.index != 0 {
-                if let Some(p) = self.siblings.first().cloned() {
-                    if self.open_path(p) {
+            if self.index != 0
+                && let Some(p) = self.siblings.first().cloned()
+                    && self.open_path(p) {
                         self.index = 0;
                     }
-                }
-            }
         }
     }
 
@@ -933,11 +931,10 @@ impl App {
             c.drag = None;
             ((c.rect[0] + c.rect[2]) / 2.0, (c.rect[1] + c.rect[3]) / 2.0)
         };
-        if let Some(r) = self.crop_ratio() {
-            if let Some(c) = &mut self.crop {
+        if let Some(r) = self.crop_ratio()
+            && let Some(c) = &mut self.crop {
                 c.rect = ratio_rect(r, center, iw as f32, ih as f32);
             }
-        }
         self.ratio_dirty = true;
         self.redraw();
     }
@@ -1382,11 +1379,10 @@ impl App {
         if self.angle.step(dt, 14.0) {
             image_moving = true;
         }
-        if let Some(c) = &mut self.crop {
-            if c.appear.step(dt, 20.0) {
+        if let Some(c) = &mut self.crop
+            && c.appear.step(dt, 20.0) {
                 busy = true;
             }
-        }
         if self
             .crop
             .as_ref()
@@ -1395,12 +1391,11 @@ impl App {
             self.crop = None;
             busy = true;
         }
-        if let Some(menu) = &mut self.menu {
-            if menu.step(dt) {
+        if let Some(menu) = &mut self.menu
+            && menu.step(dt) {
                 busy = true;
                 self.menu_dirty = true;
             }
-        }
         if let Some(t) = &mut self.toast {
             if now >= t.until {
                 t.appear.to = 0.0;
@@ -1506,8 +1501,8 @@ impl App {
         }
 
         let mut toast_buf = None;
-        if let Some(t) = &mut self.toast {
-            if t.dirty {
+        if let Some(t) = &mut self.toast
+            && t.dirty {
                 t.dirty = false;
                 let s = lay.scale;
                 let px = 14.0 * s;
@@ -1544,7 +1539,6 @@ impl App {
                 }
                 toast_buf = Some((tb, bw, bh));
             }
-        }
 
         let crop_scr = match &self.crop {
             Some(c) => self.crop_screen(&lay, c.rect),
@@ -1565,8 +1559,8 @@ impl App {
         }
 
         let mut bar_buf = None;
-        if let Some(c) = &mut self.crop {
-            if c.bar_dirty {
+        if let Some(c) = &mut self.crop
+            && c.bar_dirty {
                 c.bar_dirty = false;
                 let pad = c.bar.pad();
                 let (bw, bh) = ((c.bar.w + 2 * pad) as u32, (c.bar.h + 2 * pad) as u32);
@@ -1583,7 +1577,6 @@ impl App {
                 );
                 bar_buf = Some((bb, bw, bh));
             }
-        }
 
         let mut dialog_buf = None;
         if self.dialog_dirty {
@@ -1678,11 +1671,10 @@ impl App {
         }
 
         let Some(gpu) = self.gpu.as_mut() else { return };
-        if let Some(anim) = &mut self.anim {
-            if let Some(frame) = anim.take_dirty() {
+        if let Some(anim) = &mut self.anim
+            && let Some(frame) = anim.take_dirty() {
                 gpu.set_image(frame);
             }
-        }
         if let Some(hb) = &header {
             gpu.set_overlay(gpu::HEADER, hb, w, hh);
         }
@@ -1789,8 +1781,8 @@ impl App {
             let lift = ((1.0 - menu.appear.v) * 6.0 * lay.scale) as i32;
             gpu.draw_overlay(gpu::MENU, bx, by + lift, menu.appear.v);
         }
-        if let Some(t) = &self.toast {
-            if let Some((bw, bh)) = gpu.overlay_size(gpu::TOAST) {
+        if let Some(t) = &self.toast
+            && let Some((bw, bh)) = gpu.overlay_size(gpu::TOAST) {
                 let x = vx + (vw as i32 - bw) / 2;
                 let lift = if self.crop.as_ref().is_some_and(|c| !c.canceling) {
                     (56.0 * lay.scale) as i32
@@ -1802,7 +1794,6 @@ impl App {
                     + ((1.0 - t.appear.v) * 8.0 * lay.scale) as i32;
                 gpu.draw_overlay(gpu::TOAST, x, y, t.appear.v);
             }
-        }
         if let Some(d) = &self.dialog {
             gpu.draw_overlay_scaled(gpu::BLACK, (0.0, 0.0, w as f32, h as f32), 0.5);
             let (dx, dy) = d.origin(lay.win);
@@ -1932,9 +1923,9 @@ impl ApplicationHandler<UserEvent> for App {
                 self.ctrl = m.state().control_key();
             }
             WindowEvent::KeyboardInput { event, .. } if event.state.is_pressed() => {
-                if let Some(c) = &mut self.crop {
-                    if let Some(field) = c.bar.editing {
-                        if let Some(txt) = event.text.as_ref() {
+                if let Some(c) = &mut self.crop
+                    && let Some(field) = c.bar.editing
+                        && let Some(txt) = event.text.as_ref() {
                             let digits: String =
                                 txt.chars().filter(|ch| ch.is_ascii_digit()).collect();
                             if !digits.is_empty() {
@@ -1950,8 +1941,6 @@ impl ApplicationHandler<UserEvent> for App {
                                 }
                             }
                         }
-                    }
-                }
                 if event.repeat && !is_nav_key(event.physical_key) {
                     return;
                 }
@@ -1967,14 +1956,13 @@ impl ApplicationHandler<UserEvent> for App {
                 }
                 match event.physical_key {
                     PhysicalKey::Code(KeyCode::Escape) => {
-                        if let Some(c) = &mut self.crop {
-                            if c.bar.editing.is_some() {
+                        if let Some(c) = &mut self.crop
+                            && c.bar.editing.is_some() {
                                 c.bar.editing = None;
                                 c.bar_dirty = true;
                                 self.redraw();
                                 return;
                             }
-                        }
                         if self.crop_active() {
                             self.cancel_crop();
                         } else if self.menu.is_some() {
@@ -1984,12 +1972,11 @@ impl ApplicationHandler<UserEvent> for App {
                         }
                     }
                     PhysicalKey::Code(KeyCode::Enter | KeyCode::NumpadEnter) => {
-                        if let Some(c) = &mut self.crop {
-                            if c.bar.editing.is_some() {
+                        if let Some(c) = &mut self.crop
+                            && c.bar.editing.is_some() {
                                 self.commit_crop_field();
                                 return;
                             }
-                        }
                         if self.crop_active() {
                             self.apply_crop();
                         } else if self.image.is_none() {
@@ -1997,8 +1984,8 @@ impl ApplicationHandler<UserEvent> for App {
                         }
                     }
                     PhysicalKey::Code(KeyCode::Tab) => {
-                        if let Some(c) = &mut self.crop {
-                            if let Some(field) = c.bar.editing {
+                        if let Some(c) = &mut self.crop
+                            && let Some(field) = c.bar.editing {
                                 self.commit_crop_field();
                                 if let Some(c) = &mut self.crop {
                                     c.bar.editing = Some(match field {
@@ -2008,9 +1995,7 @@ impl ApplicationHandler<UserEvent> for App {
                                     c.bar_dirty = true;
                                     self.redraw();
                                 }
-                                return;
                             }
-                        }
                     }
                     PhysicalKey::Code(KeyCode::Backspace) => {
                         if let Some(c) = &mut self.crop {
@@ -2023,7 +2008,6 @@ impl ApplicationHandler<UserEvent> for App {
                                 buf.pop();
                                 c.bar_dirty = true;
                                 self.redraw();
-                                return;
                             }
                         }
                     }
@@ -2130,12 +2114,11 @@ impl ApplicationHandler<UserEvent> for App {
             } => {
                 if !state.is_pressed() {
                     self.dragging = false;
-                    if let Some(c) = &mut self.crop {
-                        if c.drag.is_some() {
+                    if let Some(c) = &mut self.crop
+                        && c.drag.is_some() {
                             c.drag = None;
                             self.redraw();
                         }
-                    }
                     return;
                 }
                 if self.dialog.is_some() {
@@ -2168,12 +2151,11 @@ impl ApplicationHandler<UserEvent> for App {
                 let (Some(window), Some(lay)) = (self.window.clone(), self.layout()) else {
                     return;
                 };
-                if !window.is_maximized() {
-                    if let Some(dir) = edge_dir(self.cursor, lay.win, (EDGE * lay.scale) as f64) {
+                if !window.is_maximized()
+                    && let Some(dir) = edge_dir(self.cursor, lay.win, (EDGE * lay.scale) as f64) {
                         let _ = window.drag_resize_window(dir);
                         return;
                     }
-                }
                 if let Some(p) = self.bar_local(&lay) {
                     let action = self.crop.as_ref().and_then(|c| c.bar.action_at(p));
                     match action {
@@ -2211,11 +2193,10 @@ impl ApplicationHandler<UserEvent> for App {
                             return;
                         }
                         None => {
-                            if let Some(c) = &mut self.crop {
-                                if c.bar.editing.is_some() {
+                            if let Some(c) = &mut self.crop
+                                && c.bar.editing.is_some() {
                                     self.commit_crop_field();
                                 }
-                            }
                         }
                     }
                     let on_bar = self.crop.as_ref().is_some_and(|c| {
@@ -2268,23 +2249,21 @@ impl ApplicationHandler<UserEvent> for App {
                 self.update_crop_drag();
                 self.update_modal_hover();
 
-                if let Some(menu) = &mut self.menu {
-                    if menu.update_cursor(new, &self.font) {
+                if let Some(menu) = &mut self.menu
+                    && menu.update_cursor(new, &self.font) {
                         self.menu_dirty = true;
                         self.redraw();
                     }
-                }
 
                 self.update_pointer();
             }
             WindowEvent::CursorLeft { .. } | WindowEvent::Focused(false) => {
                 self.dragging = false;
-                if let Some(c) = &mut self.crop {
-                    if c.drag.is_some() {
+                if let Some(c) = &mut self.crop
+                    && c.drag.is_some() {
                         c.drag = None;
                         self.redraw();
                     }
-                }
             }
             WindowEvent::DroppedFile(path) => self.open_external(path),
             WindowEvent::RedrawRequested => self.render(),

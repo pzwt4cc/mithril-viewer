@@ -106,6 +106,7 @@ pub struct Gpu {
     win: (u32, u32),
     image: Option<Tex>,
     overlays: [Option<Tex>; OVERLAYS],
+    scratch_rgba: Vec<u8>,
 }
 
 impl Gpu {
@@ -199,6 +200,7 @@ impl Gpu {
             win: (1, 1),
             image: None,
             overlays: Default::default(),
+            scratch_rgba: Vec::new(),
         };
         Ok((Rc::new(window), gpu))
     }
@@ -237,13 +239,23 @@ impl Gpu {
     }
 
     pub fn set_overlay(&mut self, slot: usize, px: &[u32], w: u32, h: u32) {
+        self.scratch_rgba.clear();
+        self.scratch_rgba.reserve(px.len() * 4);
+        for &p in px {
+            self.scratch_rgba.extend_from_slice(&[
+                (p >> 16) as u8,
+                (p >> 8) as u8,
+                p as u8,
+                (p >> 24) as u8,
+            ]);
+        }
         unsafe {
             upload(
                 &self.gl,
                 &mut self.overlays[slot],
                 w as i32,
                 h as i32,
-                &to_rgba(px),
+                &self.scratch_rgba,
                 false,
             )
         }
@@ -355,13 +367,7 @@ impl Gpu {
     }
 }
 
-fn to_rgba(px: &[u32]) -> Vec<u8> {
-    let mut v = Vec::with_capacity(px.len() * 4);
-    for &p in px {
-        v.extend_from_slice(&[(p >> 16) as u8, (p >> 8) as u8, p as u8, (p >> 24) as u8]);
-    }
-    v
-}
+
 
 unsafe fn upload(
     gl: &glow::Context,

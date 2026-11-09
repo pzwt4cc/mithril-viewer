@@ -15,7 +15,7 @@ use image::{
 
 use crate::anim::Anim;
 
-const GIF_MEMORY_LIMIT: usize = 1 << 30;
+const GIF_MEMORY_LIMIT: usize = 256 * 1024 * 1024;
 
 pub struct Loaded {
     pub image: RgbaImage,
@@ -29,6 +29,9 @@ static FONT_DB: LazyLock<Arc<resvg::usvg::fontdb::Database>> = LazyLock::new(|| 
     fontdb.load_system_fonts();
     Arc::new(fontdb)
 });
+
+static EMPTY_FONT_DB: LazyLock<Arc<resvg::usvg::fontdb::Database>> =
+    LazyLock::new(|| Arc::new(resvg::usvg::fontdb::Database::new()));
 
 fn extract_symbol_ids(text: &str) -> Vec<String> {
     let mut ids = Vec::new();
@@ -66,7 +69,7 @@ fn synthesize_symbols_grid(text: &str, ids: &[String]) -> Option<String> {
     }
     let count = ids.len();
     let cols = (count as f32).sqrt().ceil().max(1.0) as usize;
-    let rows = (count + cols - 1) / cols;
+    let rows = count.div_ceil(cols);
     let cell_size = 128.0;
     let pad = 16.0;
     let icon_size = cell_size - 2.0 * pad;
@@ -112,8 +115,13 @@ fn load_svg(path: &Path) -> Result<Loaded, Box<dyn Error>> {
             data = decompressed;
         }
     }
+    let fontdb = if data.windows(5).any(|w| w == b"<text" || w == b"<tspa") {
+        FONT_DB.clone()
+    } else {
+        EMPTY_FONT_DB.clone()
+    };
     let opt = resvg::usvg::Options {
-        fontdb: FONT_DB.clone(),
+        fontdb,
         ..Default::default()
     };
     let tree = match resvg::usvg::Tree::from_data(&data, &opt) {
@@ -144,8 +152,8 @@ fn load_svg(path: &Path) -> Result<Loaded, Box<dyn Error>> {
         1.0
     };
     let (w, h) = (
-        ((base_w * scale).ceil() as u32).clamp(1, 16384),
-        ((base_h * scale).ceil() as u32).clamp(1, 16384),
+        ((base_w * scale).ceil() as u32).clamp(1, 4096),
+        ((base_h * scale).ceil() as u32).clamp(1, 4096),
     );
     let mut pixmap =
         resvg::tiny_skia::Pixmap::new(w, h).ok_or("Failed to allocate pixel buffer for SVG")?;
@@ -156,7 +164,7 @@ fn load_svg(path: &Path) -> Result<Loaded, Box<dyn Error>> {
     );
     let mut raw = pixmap.take();
     let mut has_alpha = false;
-    for pixel in raw.chunks_exact_mut(4) {
+    for pixel in raw.as_chunks_mut::<4>().0 {
         let a = pixel[3] as u32;
         if a < 255 {
             has_alpha = true;
@@ -193,17 +201,15 @@ pub fn load(path: &Path) -> Result<Loaded, Box<dyn Error>> {
     };
     let format = reader.format();
 
-    if format == Some(ImageFormat::Gif) {
-        if let Some(loaded) = load_gif(path)? {
+    if format == Some(ImageFormat::Gif)
+        && let Some(loaded) = load_gif(path)? {
             return Ok(loaded);
         }
-    }
 
-    if format.is_none() {
-        if let Ok(loaded) = load_svg(path) {
+    if format.is_none()
+        && let Ok(loaded) = load_svg(path) {
             return Ok(loaded);
         }
-    }
 
     let mut decoder = reader.into_decoder()?;
     let orientation = decoder.orientation().unwrap_or(Orientation::NoTransforms);
@@ -260,30 +266,6 @@ fn is_supported(path: &Path) -> bool {
         .is_some_and(|e| EXTENSIONS.iter().any(|x| x.eq_ignore_ascii_case(e)))
 }
 
-fn natural_key(path: &Path) -> String {
-    let name = path
-        .file_name()
-        .map(|n| n.to_string_lossy().to_lowercase())
-        .unwrap_or_default();
-    let mut key = String::with_capacity(name.len() + 16);
-    let mut digits = String::new();
-    for c in name.chars() {
-        if c.is_ascii_digit() {
-            digits.push(c);
-            continue;
-        }
-        if !digits.is_empty() {
-            key.push_str(&format!("{digits:0>12}"));
-            digits.clear();
-        }
-        key.push(c);
-    }
-    if !digits.is_empty() {
-        key.push_str(&format!("{digits:0>12}"));
-    }
-    key
-}
-
 pub fn siblings(path: &Path) -> (Vec<PathBuf>, usize) {
     let dir = match path.parent() {
         Some(d) if !d.as_os_str().is_empty() => d,
@@ -296,7 +278,11 @@ pub fn siblings(path: &Path) -> (Vec<PathBuf>, usize) {
         .map(|e| e.path())
         .filter(|p| is_supported(p) && p.is_file())
         .collect();
-    list.sort_by_cached_key(|p| natural_key(p));
+    list.sort_by(|a, b| {
+        let an = a.file_name().and_then(|n| n.to_str()).unwrap_or_default();
+        let bn = b.file_name().and_then(|n| n.to_str()).unwrap_or_default();
+        crate::nav::natural_cmp(an, bn)
+    });
     let index = list
         .iter()
         .position(|p| p.file_name() == path.file_name())

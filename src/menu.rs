@@ -555,11 +555,10 @@ impl Menu {
     }
 
     pub fn action_under(&self, p: (f64, f64)) -> Option<Action> {
-        if let Some(sub) = &self.submenu {
-            if let Some(act) = sub.action_under(p, self.scale) {
+        if let Some(sub) = &self.submenu
+            && let Some(act) = sub.action_under(p, self.scale) {
                 return Some(act);
             }
-        }
         let i = self.item_at(p)?;
         match self.entries.get(i)? {
             Entry::Item { action, .. } => Some(*action),
