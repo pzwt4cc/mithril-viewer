@@ -459,7 +459,7 @@ impl App {
             .map(|d| d.to_path_buf());
         std::thread::spawn(move || {
             let mut dlg = rfd::FileDialog::new()
-                .add_filter("Images", &["png", "jpg", "jpeg", "gif", "webp", "bmp", "svg", "svgz", "avif", "ico", "tiff", "tif", "qoi"])
+                .add_filter("Images", &["png", "apng", "jpg", "jpeg", "gif", "webp", "bmp", "svg", "svgz", "avif", "ico", "tiff", "tif", "qoi"])
                 .add_filter("All Files", &["*"]);
             if let Some(dir) = start {
                 dlg = dlg.set_directory(dir);
