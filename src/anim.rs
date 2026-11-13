@@ -61,6 +61,17 @@ impl Anim {
         self.dirty = true;
     }
 
+    pub fn flip(&mut self, horizontal: bool) {
+        for f in self.frames.iter_mut() {
+            if horizontal {
+                imageops::flip_horizontal_in_place(f);
+            } else {
+                imageops::flip_vertical_in_place(f);
+            }
+        }
+        self.dirty = true;
+    }
+
     pub fn current(&self) -> &RgbaImage {
         &self.frames[self.index]
     }

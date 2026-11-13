@@ -8,7 +8,7 @@ use crate::{
     theme::{self, ThemeMode},
 };
 
-const CONTEXT_MENU_W: f32 = 240.0;
+const CONTEXT_MENU_W: f32 = 290.0;
 const SETTINGS_MENU_W: f32 = 370.0;
 const ITEM_H: f32 = 34.0;
 const SECTION_H: f32 = 30.0;
@@ -20,6 +20,8 @@ pub enum Action {
     ResetZoom,
     RotateLeft,
     RotateRight,
+    FlipHorizontal,
+    FlipVertical,
     Crop,
     Print,
     Copy,
@@ -88,6 +90,8 @@ pub fn context_entries(mode: DeleteMode, fit_to_window: bool) -> Vec<Entry> {
         Entry::Separator,
         item(Action::RotateLeft, tr("menu.rotate_left"), "Shift+R"),
         item(Action::RotateRight, tr("menu.rotate_right"), "R"),
+        item(Action::FlipHorizontal, tr("menu.flip_horizontal"), "Ctrl+R"),
+        item(Action::FlipVertical, tr("menu.flip_vertical"), "Ctrl+Shift+R"),
         item(Action::Crop, tr("menu.crop"), "C"),
         item(Action::Fullscreen, tr("menu.fullscreen"), "F11"),
         Entry::Separator,
@@ -1000,5 +1004,14 @@ mod tests {
         assert!(menu.content_h > menu.h as f32);
         assert!(menu.scroll(-2.0));
         assert!(menu.scroll_target > 0.0);
+    }
+
+    #[test]
+    fn test_context_menu_contains_flip_actions() {
+        let entries = context_entries(DeleteMode::Trash, false);
+        let has_fh = entries.iter().any(|e| matches!(e, Entry::Item { action: Action::FlipHorizontal, .. }));
+        let has_fv = entries.iter().any(|e| matches!(e, Entry::Item { action: Action::FlipVertical, .. }));
+        assert!(has_fh);
+        assert!(has_fv);
     }
 }

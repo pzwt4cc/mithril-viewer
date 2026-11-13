@@ -60,3 +60,5 @@ settings.theme_system = Системна
 settings.theme_neutral = Нейтральна
 settings.theme_dark = Темна
 settings.theme_light = Світла
+menu.flip_horizontal = Відобразити горизонтально
+menu.flip_vertical = Відобразити вертикально

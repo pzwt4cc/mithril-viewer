@@ -60,3 +60,5 @@ settings.theme_system = Sistema
 settings.theme_neutral = Neutral
 settings.theme_dark = Oscuro
 settings.theme_light = Claro
+menu.flip_horizontal = Voltear horizontalmente
+menu.flip_vertical = Voltear verticalmente

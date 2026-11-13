@@ -60,3 +60,5 @@ settings.theme_system = System
 settings.theme_neutral = Neutral
 settings.theme_dark = Dunkel
 settings.theme_light = Hell
+menu.flip_horizontal = Horizontal spiegeln
+menu.flip_vertical = Vertikal spiegeln

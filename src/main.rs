@@ -145,6 +145,16 @@ struct Source {
     has_alpha: bool,
 }
 
+struct CropBackup {
+    image: RgbaImage,
+    src: Option<Source>,
+    info: Option<Info>,
+    modified: bool,
+    rotation: u8,
+    flipped: bool,
+    cropped: bool,
+}
+
 #[allow(clippy::manual_checked_ops)]
 fn logo_pixels(size: u32) -> Vec<u32> {
     let Ok(img) = image::load_from_memory_with_format(ICON_PNG, ImageFormat::Png) else {
@@ -239,8 +249,10 @@ struct App {
     settings_open: bool,
     toast: Option<Toast>,
     crop: Option<Crop>,
-    crop_backup: Option<(RgbaImage, Option<Source>, Option<Info>, bool)>,
+    crop_backup: Option<CropBackup>,
     rotation: u8,
+    flipped: bool,
+    cropped: bool,
     dialog: Option<Dialog>,
     dialog_dirty: bool,
     modified: bool,
@@ -298,6 +310,8 @@ impl App {
             crop: None,
             crop_backup: None,
             rotation: 0,
+            flipped: false,
+            cropped: false,
             dialog: None,
             dialog_dirty: false,
             modified: false,
@@ -411,6 +425,8 @@ impl App {
                 self.path = Some(path);
                 self.modified = false;
                 self.rotation = 0;
+                self.flipped = false;
+                self.cropped = false;
                 self.header_hide = Fade::new(0.0);
                 self.drag_hide = Fade::new(0.0);
                 self.view = View::new(self.config.fit_to_window);
@@ -668,6 +684,8 @@ impl App {
             }
             Action::RotateLeft => self.rotate(false),
             Action::RotateRight => self.rotate(true),
+            Action::FlipHorizontal => self.flip(true),
+            Action::FlipVertical => self.flip(false),
             Action::Crop => self.start_crop(),
             Action::Fullscreen => self.toggle_fullscreen(),
             Action::ToggleFitToWindow => self.toggle_fit_to_window(),
@@ -698,7 +716,7 @@ impl App {
         } else {
             imageops::rotate270(&img)
         };
-        self.rotation = if clockwise {
+        self.rotation = if clockwise ^ self.flipped {
             (self.rotation + 1) % 4
         } else {
             (self.rotation + 3) % 4
@@ -709,7 +727,7 @@ impl App {
             if let Some(gpu) = &mut self.gpu {
                 gpu.set_image(&rotated);
             }
-            self.modified = self.rotation != 0;
+            self.modified = self.cropped || self.rotation != 0 || self.flipped;
         }
         self.image = Some(rotated);
         self.view.reset();
@@ -717,6 +735,31 @@ impl App {
             v: if clockwise { -FRAC_PI_2 } else { FRAC_PI_2 },
             to: 0.0,
         };
+        self.redraw();
+    }
+
+    fn flip(&mut self, horizontal: bool) {
+        if self.crop_active() || self.dialog.is_some() {
+            return;
+        }
+        let Some(mut img) = self.image.take() else { return };
+        if horizontal {
+            imageops::flip_horizontal_in_place(&mut img);
+            self.flipped = !self.flipped;
+        } else {
+            imageops::flip_vertical_in_place(&mut img);
+            self.flipped = !self.flipped;
+            self.rotation = (self.rotation + 2) % 4;
+        }
+        if let Some(anim) = &mut self.anim {
+            anim.flip(horizontal);
+        } else {
+            if let Some(gpu) = &mut self.gpu {
+                gpu.set_image(&img);
+            }
+            self.modified = self.cropped || self.rotation != 0 || self.flipped;
+        }
+        self.image = Some(img);
         self.redraw();
     }
 
@@ -1007,7 +1050,15 @@ impl App {
         let Some(img) = self.image.as_ref() else {
             return false;
         };
-        self.crop_backup = Some((img.clone(), self.src, self.info.clone(), self.modified));
+        self.crop_backup = Some(CropBackup {
+            image: img.clone(),
+            src: self.src,
+            info: self.info.clone(),
+            modified: self.modified,
+            rotation: self.rotation,
+            flipped: self.flipped,
+            cropped: self.cropped,
+        });
         let (iw, ih) = img.dimensions();
         let x = (c.rect[0].round().max(0.0) as u32).min(iw.saturating_sub(1));
         let y = (c.rect[1].round().max(0.0) as u32).min(ih.saturating_sub(1));
@@ -1029,7 +1080,9 @@ impl App {
         self.sidebar_dirty = true;
         self.view.reset();
         self.modified = true;
+        self.cropped = true;
         self.rotation = 0;
+        self.flipped = false;
         self.redraw();
         true
     }
@@ -1109,14 +1162,17 @@ impl App {
         match a {
             DialogAction::Cancel => {
                 self.close_dialog();
-                if let Some((img, src, info, modified)) = self.crop_backup.take() {
+                if let Some(b) = self.crop_backup.take() {
                     if let Some(gpu) = &mut self.gpu {
-                        gpu.set_image(&img);
+                        gpu.set_image(&b.image);
                     }
-                    self.image = Some(img);
-                    self.src = src;
-                    self.info = info;
-                    self.modified = modified;
+                    self.image = Some(b.image);
+                    self.src = b.src;
+                    self.info = b.info;
+                    self.modified = b.modified;
+                    self.rotation = b.rotation;
+                    self.flipped = b.flipped;
+                    self.cropped = b.cropped;
                     self.sidebar_dirty = true;
                     self.header_dirty = true;
                     self.view.reset();
@@ -1244,6 +1300,8 @@ impl App {
         self.save_to_path(&path)?;
         self.modified = false;
         self.rotation = 0;
+        self.flipped = false;
+        self.cropped = false;
         self.refresh_info();
         self.sidebar_dirty = true;
         self.header_dirty = true;
@@ -2059,6 +2117,10 @@ impl ApplicationHandler<UserEvent> for App {
                         self.pick_folder()
                     }
                     PhysicalKey::Code(KeyCode::KeyO) if self.ctrl => self.pick_file(),
+                    PhysicalKey::Code(KeyCode::KeyR) if self.ctrl => {
+                        self.close_menu();
+                        self.flip(!self.shift);
+                    }
                     PhysicalKey::Code(KeyCode::KeyR) if !self.ctrl => {
                         self.close_menu();
                         self.rotate(!self.shift);

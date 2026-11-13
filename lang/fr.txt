@@ -60,3 +60,5 @@ settings.theme_system = Système
 settings.theme_neutral = Neutre
 settings.theme_dark = Sombre
 settings.theme_light = Clair
+menu.flip_horizontal = Retourner horizontalement
+menu.flip_vertical = Retourner verticalement
