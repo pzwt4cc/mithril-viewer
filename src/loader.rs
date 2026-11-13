@@ -258,7 +258,9 @@ fn load_gif(path: &Path) -> Result<Option<Loaded>, Box<dyn Error>> {
     }))
 }
 
-const EXTENSIONS: &[&str] = &["jpg", "jpeg", "png", "gif", "webp", "bmp", "svg", "svgz"];
+const EXTENSIONS: &[&str] = &[
+    "jpg", "jpeg", "png", "gif", "webp", "bmp", "svg", "svgz", "avif", "ico", "tiff", "tif", "qoi",
+];
 
 fn is_supported(path: &Path) -> bool {
     path.extension()
@@ -302,6 +304,14 @@ mod tests {
         let loaded = load(Path::new("assets/logo.svg")).expect("failed to load svg");
         assert!(loaded.image.width() > 0);
         assert!(loaded.image.height() > 0);
+    }
+
+    #[test]
+    fn test_supported_extensions() {
+        for ext in ["avif", "ico", "tiff", "tif", "qoi", "png", "jpg", "svg"] {
+            let path = PathBuf::from(format!("image.{ext}"));
+            assert!(is_supported(&path));
+        }
     }
 
     #[test]

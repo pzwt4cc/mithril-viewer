@@ -44,6 +44,10 @@ impl Info {
             Some(ImageFormat::Gif) => "GIF".to_string(),
             Some(ImageFormat::WebP) => "WebP".to_string(),
             Some(ImageFormat::Bmp) => "BMP".to_string(),
+            Some(ImageFormat::Avif) => "AVIF".to_string(),
+            Some(ImageFormat::Ico) => "ICO".to_string(),
+            Some(ImageFormat::Tiff) => "TIFF".to_string(),
+            Some(ImageFormat::Qoi) => "QOI".to_string(),
             Some(other) => format!("{other:?}"),
             None => {
                 let ext = path
