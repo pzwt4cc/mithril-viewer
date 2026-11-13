@@ -62,3 +62,6 @@ settings.theme_dark = Тёмная
 settings.theme_light = Светлая
 menu.flip_horizontal = Отразить по горизонтали
 menu.flip_vertical = Отразить по вертикали
+menu.wallpaper = Установить как обои
+toast.wallpaper_set = Обои установлены
+toast.wallpaper_failed = Не удалось установить обои

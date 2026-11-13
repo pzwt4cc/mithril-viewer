@@ -62,3 +62,6 @@ settings.theme_dark = Oscuro
 settings.theme_light = Claro
 menu.flip_horizontal = Voltear horizontalmente
 menu.flip_vertical = Voltear verticalmente
+menu.wallpaper = Establecer como fondo
+toast.wallpaper_set = Fondo de pantalla establecido
+toast.wallpaper_failed = No se pudo establecer el fondo

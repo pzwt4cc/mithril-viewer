@@ -62,3 +62,6 @@ settings.theme_dark = Dark
 settings.theme_light = Light
 menu.flip_horizontal = Flip horizontal
 menu.flip_vertical = Flip vertical
+menu.wallpaper = Set as wallpaper
+toast.wallpaper_set = Wallpaper updated
+toast.wallpaper_failed = Couldn't set wallpaper

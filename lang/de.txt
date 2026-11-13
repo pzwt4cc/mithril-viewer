@@ -62,3 +62,6 @@ settings.theme_dark = Dunkel
 settings.theme_light = Hell
 menu.flip_horizontal = Horizontal spiegeln
 menu.flip_vertical = Vertikal spiegeln
+menu.wallpaper = Als Hintergrundbild
+toast.wallpaper_set = Hintergrundbild festgelegt
+toast.wallpaper_failed = Hintergrundbild konnte nicht festgelegt werden

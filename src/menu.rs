@@ -28,6 +28,7 @@ pub enum Action {
     Delete,
     Fullscreen,
     ToggleFitToWindow,
+    SetWallpaper,
     SetLanguage(&'static str),
     SetDeleteMode(DeleteMode),
     SetOpacity(u8),
@@ -97,6 +98,7 @@ pub fn context_entries(mode: DeleteMode, fit_to_window: bool) -> Vec<Entry> {
         Entry::Separator,
         item(Action::Copy, tr("menu.copy"), "Ctrl+C"),
         item(Action::Print, tr("menu.print"), "Ctrl+P"),
+        item(Action::SetWallpaper, tr("menu.wallpaper"), ""),
         Entry::Separator,
         item(Action::Delete, delete_label(mode), "Del"),
     ]

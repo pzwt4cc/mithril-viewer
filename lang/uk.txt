@@ -62,3 +62,6 @@ settings.theme_dark = Темна
 settings.theme_light = Світла
 menu.flip_horizontal = Відобразити горизонтально
 menu.flip_vertical = Відобразити вертикально
+menu.wallpaper = Встановити як шпалери
+toast.wallpaper_set = Шпалери встановлено
+toast.wallpaper_failed = Не вдалося встановити шпалери

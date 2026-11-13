@@ -15,6 +15,7 @@ mod prefetch;
 mod theme;
 mod ui;
 mod view;
+mod wallpaper;
 
 use std::{
     borrow::Cow,
@@ -133,6 +134,7 @@ enum UserEvent {
     Picked(Option<PathBuf>),
     PickedFolder(Option<PathBuf>),
     Prefetched(u64, PathBuf, Box<loader::Loaded>),
+    Wallpaper(Result<(), String>),
 }
 
 enum After {
@@ -730,6 +732,7 @@ impl App {
             Action::Fullscreen => self.toggle_fullscreen(),
             Action::ToggleFitToWindow => self.toggle_fit_to_window(),
             Action::Print => self.print(),
+            Action::SetWallpaper => self.set_wallpaper(),
             Action::Copy => self.copy_image(),
             Action::Delete => self.request_delete(),
             Action::SetTheme(mode) => self.set_theme(mode),
@@ -801,6 +804,24 @@ impl App {
         }
         self.image = Some(img);
         self.redraw();
+    }
+
+    fn set_wallpaper(&mut self) {
+        let Some(path) = self.path.clone() else {
+            return;
+        };
+        let img = self
+            .anim
+            .as_ref()
+            .map(|a| a.current().clone())
+            .or_else(|| self.image.clone());
+        let format = self.src.and_then(|s| s.format);
+        let modified = self.modified;
+        let proxy = self.proxy.clone();
+        std::thread::spawn(move || {
+            let res = wallpaper::set(&path, img.as_ref(), format, modified);
+            let _ = proxy.send_event(UserEvent::Wallpaper(res));
+        });
     }
 
     fn copy_image(&mut self) {
@@ -2030,6 +2051,13 @@ impl ApplicationHandler<UserEvent> for App {
             UserEvent::Prefetched(job_gen, path, loaded) => {
                 self.prefetcher.insert(job_gen, path, *loaded);
             }
+            UserEvent::Wallpaper(res) => match res {
+                Ok(()) => self.show_toast(tr("toast.wallpaper_set").to_string()),
+                Err(e) => {
+                    let msg = format!("{}: {e}", tr("toast.wallpaper_failed"));
+                    self.show_toast(msg);
+                }
+            },
         }
     }
 
