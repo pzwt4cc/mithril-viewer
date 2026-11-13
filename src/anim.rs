@@ -75,4 +75,8 @@ impl Anim {
     pub fn current(&self) -> &RgbaImage {
         &self.frames[self.index]
     }
+
+    pub fn memory_bytes(&self) -> usize {
+        self.frames.iter().map(|f| f.as_raw().len()).sum()
+    }
 }

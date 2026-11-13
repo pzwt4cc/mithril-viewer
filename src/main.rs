@@ -11,6 +11,7 @@ mod loader;
 mod menu;
 mod modal;
 mod nav;
+mod prefetch;
 mod theme;
 mod ui;
 mod view;
@@ -47,6 +48,7 @@ use i18n::tr;
 use info::Info;
 use layout::{EDGE, Hit, LOGO_S, Layout, START_H, START_W};
 use menu::{Action, Menu};
+use prefetch::Prefetcher;
 use modal::{BarAction, CropBar, CropField, Dialog, DialogAction};
 use nav::first_image;
 use ui::{draw_header, draw_sidebar, draw_start};
@@ -130,6 +132,7 @@ enum UserEvent {
     Printed(Result<bool, String>),
     Picked(Option<PathBuf>),
     PickedFolder(Option<PathBuf>),
+    Prefetched(u64, PathBuf, Box<loader::Loaded>),
 }
 
 enum After {
@@ -274,6 +277,8 @@ struct App {
     after: After,
     sidebar_ready: bool,
     anim_active: bool,
+    prefetcher: Prefetcher,
+    nav_dir: isize,
 }
 
 impl App {
@@ -315,7 +320,9 @@ impl App {
             dialog: None,
             dialog_dirty: false,
             modified: false,
-            proxy,
+            proxy: proxy.clone(),
+            prefetcher: Prefetcher::new(proxy),
+            nav_dir: 1,
             clipboard: None,
             exit_requested: false,
             picking: false,
@@ -398,10 +405,38 @@ impl App {
         let (list, index) = loader::siblings(&path);
         self.siblings = list;
         self.index = index;
+        self.prefetch_neighbors();
+    }
+
+    fn prefetch_neighbors(&mut self) {
+        let n = self.siblings.len();
+        if n < 2 {
+            self.prefetcher.clear();
+            return;
+        }
+        let next = (self.index + 1) % n;
+        let prev = (self.index + n - 1) % n;
+        let mut targets = Vec::with_capacity(2);
+        if self.nav_dir < 0 {
+            targets.push(self.siblings[prev].clone());
+            if next != prev {
+                targets.push(self.siblings[next].clone());
+            }
+        } else {
+            targets.push(self.siblings[next].clone());
+            if prev != next {
+                targets.push(self.siblings[prev].clone());
+            }
+        }
+        self.prefetcher.request(targets);
     }
 
     fn open_path(&mut self, path: PathBuf) -> bool {
-        match loader::load(&path) {
+        let loaded = self
+            .prefetcher
+            .take(&path)
+            .map_or_else(|| loader::load(&path), Ok);
+        match loaded {
             Ok(l) => {
                 let dims = l.image.dimensions();
                 if let Some(gpu) = &mut self.gpu {
@@ -537,6 +572,7 @@ impl App {
             return;
         }
         self.close_menu();
+        self.nav_dir = delta;
         let n = self.siblings.len() as isize;
         let mut i = self.index as isize;
         for _ in 1..n {
@@ -545,6 +581,7 @@ impl App {
             if self.open_path(path) {
                 self.index = i as usize;
                 self.last_nav = Some(Instant::now());
+                self.prefetch_neighbors();
                 return;
             }
         }
@@ -563,17 +600,20 @@ impl App {
     fn after_delete(&mut self) {
         self.modified = false;
         if self.index < self.siblings.len() {
-            self.siblings.remove(self.index);
+            let removed = self.siblings.remove(self.index);
+            self.prefetcher.invalidate(&removed);
         }
         while !self.siblings.is_empty() {
             let i = self.index.min(self.siblings.len() - 1);
             let path = self.siblings[i].clone();
             if self.open_path(path) {
                 self.index = i;
+                self.prefetch_neighbors();
                 return;
             }
             self.siblings.remove(i);
         }
+        self.prefetcher.clear();
         self.exit_requested = true;
     }
 
@@ -1298,6 +1338,7 @@ impl App {
     fn overwrite_current(&mut self) -> Result<(), String> {
         let path = self.path.clone().ok_or("no path")?;
         self.save_to_path(&path)?;
+        self.prefetcher.invalidate(&path);
         self.modified = false;
         self.rotation = 0;
         self.flipped = false;
@@ -1986,10 +2027,14 @@ impl ApplicationHandler<UserEvent> for App {
                     }
                 }
             }
+            UserEvent::Prefetched(job_gen, path, loaded) => {
+                self.prefetcher.insert(job_gen, path, *loaded);
+            }
         }
     }
 
     fn exiting(&mut self, _el: &ActiveEventLoop) {
+        self.prefetcher.shutdown();
         self.gpu = None;
         self.window = None;
     }
