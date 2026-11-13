@@ -943,7 +943,7 @@ mod tests {
     fn test_fonts() -> Fonts {
         Fonts::new(
             Font::from_bytes(
-                include_bytes!("../assets/InterVariable.ttf") as &[u8],
+                include_bytes!("../assets/fonts/InterVariable.ttf") as &[u8],
                 FontSettings::default(),
             )
             .unwrap(),

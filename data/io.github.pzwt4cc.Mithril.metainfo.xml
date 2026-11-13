@@ -10,16 +10,33 @@
     <name>pzwt4cc</name>
   </developer>
   <description>
-    <p>Mithril Viewer is a fast, lightweight image viewer with a clean dark and light interface. It opens PNG, APNG, JPEG, GIF, WebP, BMP, SVG, AVIF, ICO, TIFF, and QOI files, including animated images.</p>
-    <p xml:lang="ru">Mithril Viewer — быстрый и лёгкий просмотрщик изображений с аккуратным тёмным и светлым интерфейсом. Открывает PNG, APNG, JPEG, GIF, WebP, BMP, SVG, AVIF, ICO, TIFF и QOI, включая анимированные изображения.</p>
+    <p>Mithril Viewer is a fast, lightweight image viewer built for both tiling window managers (Hyprland, Sway, i3) and full desktop environments (GNOME, KDE Plasma, XFCE) on Wayland and X11. It opens PNG, APNG, JPEG, GIF, WebP, BMP, SVG, AVIF, ICO, TIFF, and QOI files, including animated images.</p>
+    <p xml:lang="ru">Mithril Viewer — быстрый и лёгкий просмотрщик изображений для Wayland и X11, одинаково удобный как в тайловых WM (Hyprland, Sway, i3), так и в полноценных DE (GNOME, KDE Plasma, XFCE). Открывает PNG, APNG, JPEG, GIF, WebP, BMP, SVG, AVIF, ICO, TIFF и QOI, включая анимацию.</p>
     <ul>
       <li>Smooth cursor-centered zoom, panning, fit-to-window, and fullscreen viewing</li>
       <li>Fast folder navigation with background neighbor image prefetching</li>
       <li>Quick non-destructive edits: rotation, horizontal/vertical flip, and visual crop</li>
-      <li>Clipboard copy, CUPS printing, trash/delete confirmation, and set as desktop wallpaper</li>
-      <li>Drag-and-drop file opening and multi-language interface</li>
+      <li>Dark, neutral, and light themes with adjustable window opacity</li>
+      <li>Clipboard copy, CUPS printing, trash/delete confirmation, drag-and-drop, and set as desktop wallpaper</li>
     </ul>
   </description>
+  <screenshots>
+    <screenshot type="default">
+      <caption>Animated GIF playback and image properties panel in the neutral theme</caption>
+      <caption xml:lang="ru">Воспроизведение GIF и панель свойств в нейтральной теме</caption>
+      <image type="source" width="1192" height="772">https://raw.githubusercontent.com/pzwt4cc/mithril-viewer/v0.1.0/assets/screenshots/gif-info-neutral.png</image>
+    </screenshot>
+    <screenshot>
+      <caption>Image view in the light theme</caption>
+      <caption xml:lang="ru">Просмотр изображения в светлой теме</caption>
+      <image type="source" width="1191" height="767">https://raw.githubusercontent.com/pzwt4cc/mithril-viewer/v0.1.0/assets/screenshots/viewer-light.png</image>
+    </screenshot>
+    <screenshot>
+      <caption>Clean start screen in the dark theme</caption>
+      <caption xml:lang="ru">Стартовый экран в тёмной теме</caption>
+      <image type="source" width="1191" height="767">https://raw.githubusercontent.com/pzwt4cc/mithril-viewer/v0.1.0/assets/screenshots/start-dark.png</image>
+    </screenshot>
+  </screenshots>
   <url type="homepage">https://github.com/pzwt4cc/mithril-viewer</url>
   <url type="bugtracker">https://github.com/pzwt4cc/mithril-viewer/issues</url>
   <url type="vcs-browser">https://github.com/pzwt4cc/mithril-viewer</url>

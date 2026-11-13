@@ -1,11 +1,11 @@
 <div align="center">
 
-<img src="data/icons/hicolor/512x512/apps/io.github.pzwt4cc.Mithril.png" alt="Mithril Viewer logo" width="160">
+<img src="data/icons/hicolor/512x512/apps/io.github.pzwt4cc.Mithril.png" alt="Mithril Viewer logo" width="140">
 
 # Mithril Viewer
 
-**A fast, minimal, GPU-accelerated image viewer for Linux.**
-Smooth zoom, animated GIF/WebP/APNG, quick crop, rotate and flip, and a clean UI.
+**A fast, minimal image viewer for Linux.**
+Works smoothly on both **tiling WMs** (Hyprland, Sway, Niri, i3) and **desktop environments** (GNOME, KDE Plasma, XFCE) over Wayland and X11.
 
 ![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)
 ![Rust](https://img.shields.io/badge/Rust-orange.svg)
@@ -18,20 +18,25 @@ English · [Русский](README.ru.md)
 
 ---
 
-## Features
+## Screenshots
 
-- **Formats:** PNG, APNG, JPEG, GIF, WebP, BMP, SVG, AVIF, ICO, TIFF, QOI, including animated images
-- **Smooth zoom and pan:** mouse wheel zooms at the cursor, drag to move, `F11` fullscreen
-- **Edit:** rotate, flip horizontally/vertically, crop with a visual selection, copy to clipboard
-- **Browse a folder:** switch between images next to the opened one with background neighbor prefetching
-- **Info panel:** name, folder, resolution, format, size, created and modified dates
-- **Safe editing:** your original is never overwritten. Changes are saved as a copy, and you are asked before closing
-- **Desktop integration:** set as wallpaper (`swww`, `awww`, `hyprpaper`, `swaybg`, `feh`, Plasma, GNOME), print through CUPS, trash/delete with confirmation
-- **Drag & drop** a file into the window
-- **Customizable:** 6 languages (English, Русский, Українська, Deutsch, Français, Español), dark/light theme, window opacity
-- **Native feel:** frameless rounded window with GPU rendering (OpenGL ES 3.0), works on Wayland and X11
+|                   Dark theme (start screen)                   |                      Light theme (viewer)                      |                       Neutral theme (GIF + info panel)                       |
+| :-----------------------------------------------------------: | :------------------------------------------------------------: | :--------------------------------------------------------------------------: |
+| ![Dark theme start screen](assets/screenshots/start-dark.png) | ![Light theme image view](assets/screenshots/viewer-light.png) | ![Neutral theme GIF and info panel](assets/screenshots/gif-info-neutral.png) |
+
+## What it does
+
+- **Formats:** PNG, APNG, JPEG, GIF, WebP (animated too), BMP, SVG, AVIF, ICO, TIFF, QOI
+- **Smooth & fast:** GPU-accelerated rendering, cursor-centered zoom, drag to pan, `F11` fullscreen, and background preloading for neighbor images
+- **Quick edits:** rotate, flip horizontally/vertically, visual crop — originals are never overwritten (saves as a copy and warns before closing)
+- **Themes & UI:** dark, neutral, and light themes, adjustable window opacity, and 6 languages (English, Русский, Українська, Deutsch, Français, Español)
+- **Desktop integration:** drag & drop, clipboard copy, CUPS printing, move to trash or delete, and **Set as wallpaper** (Hyprland, Sway, swww/awww, feh, KDE Plasma, GNOME)
 
 ## Installation
+
+### Flatpak (any Linux distro)
+
+Flatpak manifest and build instructions are in [`packaging/flatpak/README.md`](packaging/flatpak/README.md).
 
 ### Arch Linux (AUR)
 
@@ -39,27 +44,19 @@ English · [Русский](README.ru.md)
 yay -S mithril-viewer-git
 ```
 
-Packaging recipe: [`packaging/arch/PKGBUILD`](packaging/arch/PKGBUILD).
+Packaging files: [`packaging/arch/PKGBUILD`](packaging/arch/PKGBUILD).
 
-### Flatpak
+### Build from source
 
-See [`packaging/flatpak/README.md`](packaging/flatpak/README.md) for local Flatpak build and Flathub packaging instructions.
-
-### From source
-
-You need a recent Rust toolchain (edition 2024, Rust 1.85 or newer).
+Requires Rust 1.85+ (edition 2024) and runtime libraries (`dav1d`, `libglvnd`, `libxkbcommon`, `wayland`, `libx11`, `fontconfig`).
 
 ```sh
 git clone https://github.com/pzwt4cc/mithril-viewer.git
 cd mithril-viewer
 cargo build --release
-./target/release/mithril-viewer path/to/image.png
 ```
 
-Runtime libraries: `dav1d`, `libglvnd` (EGL), `libxkbcommon`, `wayland`, `libx11`, `fontconfig`.
-Optional: `cups` for printing, `xdg-utils` for "open containing folder", wallpaper tools (`hyprpaper`, `swww`, `swaybg`, `feh`).
-
-To add it to your application menu and "Open with" lists, install the desktop files and icons:
+To install system-wide with app menu and "Open with" support:
 
 ```sh
 sudo install -Dm755 target/release/mithril-viewer /usr/local/bin/mithril-viewer
@@ -69,20 +66,12 @@ sudo cp -r data/icons/hicolor /usr/local/share/icons/
 sudo gtk-update-icon-cache -f /usr/local/share/icons/hicolor 2>/dev/null || true
 ```
 
-## Usage
-
-```sh
-mithril-viewer image.png
-```
-
-Or just pick **Mithril Viewer** in "Open with", or drop an image onto the window.
-
-### Keyboard shortcuts
+## Shortcuts
 
 | Key                              | Action                               |
 | -------------------------------- | ------------------------------------ |
 | `←` / `→`, `PageUp` / `PageDown` | Previous / next image                |
-| Mouse wheel                      | Zoom at the cursor                   |
+| Mouse wheel                      | Zoom at cursor                       |
 | `0`                              | Reset zoom                           |
 | `F11`                            | Toggle fullscreen                    |
 | `R` / `Shift+R`                  | Rotate clockwise / counter-clockwise |
@@ -91,21 +80,14 @@ Or just pick **Mithril Viewer** in "Open with", or drop an image onto the window
 | `Ctrl+C`                         | Copy image to clipboard              |
 | `Ctrl+P`                         | Print                                |
 | `Delete`                         | Delete image                         |
-| `I`                              | Toggle the info panel                |
+| `I`                              | Toggle info panel                    |
 | `Esc`                            | Close menu / cancel crop / quit      |
 
-Right-click the image for the context menu, and use the `⋯` button in the header for settings.
-
-## Contributing
-
-Issues and pull requests are welcome.
-
-## Credits
-
-Designed and maintained by [pzwt4cc](https://github.com/pzwt4cc). Built with the help of AI (Claude by Anthropic).
+Right-click anywhere on the image for the context menu, or click `⋯` in the top-right corner for settings.
 
 ## License
 
-Mithril Viewer is released under the [MIT License](LICENSE).
+MIT License — see [`LICENSE`](LICENSE).
+Bundled [Inter](https://rsms.me/inter/) font is licensed under SIL OFL 1.1 — see [`assets/fonts/OFL.txt`](assets/fonts/OFL.txt).
 
-The bundled [Inter](https://rsms.me/inter/) font is licensed under the SIL Open Font License 1.1, see [`assets/OFL.txt`](assets/OFL.txt).
+Maintained by [pzwt4cc](https://github.com/pzwt4cc). Built with the help of AI (Claude by Anthropic).

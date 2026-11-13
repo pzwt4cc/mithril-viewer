@@ -37,7 +37,6 @@ flatpak run --command=flatpak-builder-lint org.flatpak.Builder repo repo
 
 ## Checklist Before Opening a Flathub PR
 
-1. **Screenshots:** Add 1–2 PNG screenshots (e.g. under `docs/screenshots/`), push them, and add a `<screenshots>` block to `data/io.github.pzwt4cc.Mithril.metainfo.xml` using raw GitHub URLs pinned to the release tag or commit SHA.
-2. **Release Tag:** Tag a release (`git tag v0.1.0 && git push --tags`) and replace `REPLACE_WITH_TAG_COMMIT_SHA` in `io.github.pzwt4cc.Mithril.yml` with the exact commit hash of that tag.
-3. **Refresh `cargo-sources.json`:** Whenever `Cargo.lock` changes, run `./generate-cargo-sources.py`.
-4. **Full Host Filesystem Access (Optional):** The default `finish-args` allow standard XDG user directories (`xdg-pictures`, `xdg-download`, `xdg-documents`, `xdg-desktop`, `/run/media`) so `flatpak-builder-lint` passes without exemptions. If you want `←`/`→` folder browsing across arbitrary host paths (similar to `org.gnome.Loupe`), replace those directory entries with `--filesystem=host` and request the exception in your Flathub submission.
+1. **Release Tag:** Tag a release (`git tag v0.1.0 && git push --tags`) so the `<screenshots>` URLs in `data/io.github.pzwt4cc.Mithril.metainfo.xml` (`v0.1.0`) resolve on GitHub, and replace `REPLACE_WITH_TAG_COMMIT_SHA` in `io.github.pzwt4cc.Mithril.yml` with the exact commit hash of that tag.
+2. **Refresh `cargo-sources.json`:** Whenever `Cargo.lock` changes, run `./generate-cargo-sources.py`.
+3. **Full Host Filesystem Access (Optional):** The default `finish-args` allow standard XDG user directories (`xdg-pictures`, `xdg-download`, `xdg-documents`, `xdg-desktop`, `/run/media`) so `flatpak-builder-lint` passes without exemptions. If you want `←`/`→` folder browsing across arbitrary host paths (similar to `org.gnome.Loupe`), replace those directory entries with `--filesystem=host` and request the exception in your Flathub submission.

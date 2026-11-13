@@ -2469,7 +2469,7 @@ impl ApplicationHandler<UserEvent> for App {
 fn main() {
     let font = Fonts::new(
         Font::from_bytes(
-            &include_bytes!("../assets/InterVariable.ttf")[..],
+            &include_bytes!("../assets/fonts/InterVariable.ttf")[..],
             FontSettings::default(),
         )
         .expect("failed to load font"),
