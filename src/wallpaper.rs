@@ -187,12 +187,49 @@ fn try_gnome(path: &Path) -> bool {
     ok_light
 }
 
+enum PortalOutcome {
+    Applied,
+    Cancelled,
+    Unavailable,
+}
+
+fn try_portal(path: &Path) -> PortalOutcome {
+    let Ok(file) = fs::File::open(path) else {
+        return PortalOutcome::Unavailable;
+    };
+    let res = pollster::block_on(async {
+        let req = ashpd::desktop::wallpaper::WallpaperRequest::default()
+            .show_preview(true)
+            .set_on(ashpd::desktop::wallpaper::SetOn::Background)
+            .build_file(&file)
+            .await?;
+        req.response()
+    });
+    match res {
+        Ok(()) => PortalOutcome::Applied,
+        Err(ashpd::Error::Response(ashpd::desktop::ResponseError::Cancelled)) => {
+            PortalOutcome::Cancelled
+        }
+        Err(_) => PortalOutcome::Unavailable,
+    }
+}
+
+fn try_native(target: &Path) -> bool {
+    try_swww_bin("swww", target)
+        || try_swww_bin("awww", target)
+        || try_hyprpaper(target)
+        || try_swaybg(target)
+        || try_feh(target)
+        || try_plasma(target)
+        || try_gnome(target)
+}
+
 pub fn set(
     path: &Path,
     img: Option<&RgbaImage>,
     format: Option<ImageFormat>,
     modified: bool,
-) -> Result<(), String> {
+) -> Result<bool, String> {
     let target = if needs_export(format, modified) {
         if let Some(rgba) = img {
             export_temp_png(rgba)?
@@ -203,18 +240,29 @@ pub fn set(
         fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
     };
 
-    if try_swww_bin("swww", &target)
-        || try_swww_bin("awww", &target)
-        || try_hyprpaper(&target)
-        || try_swaybg(&target)
-        || try_feh(&target)
-        || try_plasma(&target)
-        || try_gnome(&target)
-    {
-        return Ok(());
+    if Path::new("/.flatpak-info").exists() {
+        match try_portal(&target) {
+            PortalOutcome::Applied => return Ok(true),
+            PortalOutcome::Cancelled => return Ok(false),
+            PortalOutcome::Unavailable => {}
+        }
+        if try_native(&target) {
+            return Ok(true);
+        }
+        return Err("xdg-desktop-portal wallpaper backend is unavailable".into());
     }
 
-    Err("no active wallpaper daemon (swww, hyprpaper, swaybg, feh)".into())
+    if try_native(&target) {
+        return Ok(true);
+    }
+
+    match try_portal(&target) {
+        PortalOutcome::Applied => return Ok(true),
+        PortalOutcome::Cancelled => return Ok(false),
+        PortalOutcome::Unavailable => {}
+    }
+
+    Err("no active wallpaper daemon or portal backend".into())
 }
 
 #[cfg(test)]

@@ -134,7 +134,7 @@ enum UserEvent {
     Picked(Option<PathBuf>),
     PickedFolder(Option<PathBuf>),
     Prefetched(u64, PathBuf, Box<loader::Loaded>),
-    Wallpaper(Result<(), String>),
+    Wallpaper(Result<bool, String>),
 }
 
 enum After {
@@ -1863,11 +1863,12 @@ impl App {
             .as_ref()
             .is_none_or(|win| win.is_maximized() || win.fullscreen().is_some());
         gpu.begin(w, h, if square { 0.0 } else { R_WINDOW * lay.scale });
-        gpu.draw_overlay_scaled(
-            gpu::BG,
-            (0.0, 0.0, w as f32, h as f32),
-            self.config.opacity as f32 / 100.0,
-        );
+        let bg_alpha = if gpu.is_transparent() {
+            self.config.opacity as f32 / 100.0
+        } else {
+            1.0
+        };
+        gpu.draw_overlay_scaled(gpu::BG, (0.0, 0.0, w as f32, h as f32), bg_alpha);
 
         if let Some(img) = &self.image {
             let dims = img.dimensions();
@@ -2052,7 +2053,8 @@ impl ApplicationHandler<UserEvent> for App {
                 self.prefetcher.insert(job_gen, path, *loaded);
             }
             UserEvent::Wallpaper(res) => match res {
-                Ok(()) => self.show_toast(tr("toast.wallpaper_set").to_string()),
+                Ok(true) => self.show_toast(tr("toast.wallpaper_set").to_string()),
+                Ok(false) => {}
                 Err(e) => {
                     let msg = format!("{}: {e}", tr("toast.wallpaper_failed"));
                     self.show_toast(msg);

@@ -1,10 +1,10 @@
 #![allow(unsafe_op_in_unsafe_fn)]
 
-use std::{num::NonZeroU32, rc::Rc};
+use std::{cell::Cell, num::NonZeroU32, rc::Rc};
 
 use glow::HasContext;
 use glutin::{
-    config::ConfigTemplateBuilder,
+    config::{Config, ConfigTemplateBuilder},
     context::{ContextApi, ContextAttributesBuilder, PossiblyCurrentContext, Version},
     display::GetGlDisplay,
     prelude::*,
@@ -104,9 +104,80 @@ pub struct Gpu {
     u_chk1: Option<glow::UniformLocation>,
     max_tex: u32,
     win: (u32, u32),
+    transparent: bool,
     image: Option<Tex>,
     overlays: [Option<Tex>; OVERLAYS],
     scratch_rgba: Vec<u8>,
+}
+
+fn try_create_surface(
+    el: &ActiveEventLoop,
+    attrs: WindowAttributes,
+    want_alpha: bool,
+    pref: ApiPreference,
+) -> Result<
+    (
+        Window,
+        Surface<WindowSurface>,
+        PossiblyCurrentContext,
+        Config,
+        bool,
+    ),
+    String,
+> {
+    let attrs = attrs.with_transparent(want_alpha);
+    let template = if want_alpha {
+        ConfigTemplateBuilder::new().with_alpha_size(8)
+    } else {
+        ConfigTemplateBuilder::new()
+    };
+    let found_alpha = Cell::new(false);
+    let (window, config) = DisplayBuilder::new()
+        .with_window_attributes(Some(attrs.clone()))
+        .with_preference(pref)
+        .build(el, template, |configs| {
+            let mut first = None;
+            for c in configs {
+                if want_alpha && c.supports_transparency().unwrap_or(false) {
+                    found_alpha.set(true);
+                    return c;
+                }
+                if first.is_none() {
+                    first = Some(c);
+                }
+            }
+            first.expect("no OpenGL configuration available")
+        })
+        .map_err(|e| e.to_string())?;
+    let window = match window {
+        Some(w) => w,
+        None => finalize_window(el, attrs, &config).map_err(|e| e.to_string())?,
+    };
+
+    let display = config.display();
+    let raw = window.window_handle().ok().map(|h| h.as_raw());
+    let ctx_attrs = ContextAttributesBuilder::new()
+        .with_context_api(ContextApi::Gles(Some(Version::new(3, 0))))
+        .build(raw);
+    let surf_attrs = window
+        .build_surface_attributes(Default::default())
+        .map_err(|e| e.to_string())?;
+
+    let (surface, ctx) = unsafe {
+        let not_current = display
+            .create_context(&config, &ctx_attrs)
+            .map_err(|e| format!("OpenGL ES 3.0 context: {e}"))?;
+        let surface = display
+            .create_window_surface(&config, &surf_attrs)
+            .map_err(|e| e.to_string())?;
+        let ctx = not_current
+            .make_current(&surface)
+            .map_err(|e| e.to_string())?;
+        (surface, ctx)
+    };
+
+    let transparent = want_alpha && found_alpha.get();
+    Ok((window, surface, ctx, config, transparent))
 }
 
 impl Gpu {
@@ -114,58 +185,42 @@ impl Gpu {
         el: &ActiveEventLoop,
         attrs: WindowAttributes,
     ) -> Result<(Rc<Window>, Self), String> {
-        let (window, config) = DisplayBuilder::new()
-            .with_window_attributes(Some(attrs.clone()))
-            .with_preference(ApiPreference::PreferEgl)
-            .build(
-                el,
-                ConfigTemplateBuilder::new().with_alpha_size(8),
-                |configs| {
-                    let mut first = None;
-                    for c in configs {
-                        if c.supports_transparency().unwrap_or(false) {
-                            return c;
-                        }
-                        if first.is_none() {
-                            first = Some(c);
-                        }
-                    }
-                    first.expect("нет подходящей GL-конфигурации")
-                },
-            )
-            .map_err(|e| e.to_string())?;
-        let window = match window {
-            Some(w) => w,
-            None => finalize_window(el, attrs, &config).map_err(|e| e.to_string())?,
-        };
-
+        let attempts = [
+            (true, ApiPreference::PreferEgl),
+            (false, ApiPreference::PreferEgl),
+            (false, ApiPreference::FallbackEgl),
+        ];
+        let mut last_err = String::new();
+        let mut created = None;
+        for (want_alpha, pref) in attempts {
+            match try_create_surface(el, attrs.clone(), want_alpha, pref) {
+                Ok(res) => {
+                    created = Some(res);
+                    break;
+                }
+                Err(e) => last_err = e,
+            }
+        }
+        let (window, surface, ctx, config, transparent) = created.ok_or(last_err)?;
         let display = config.display();
-        let raw = window.window_handle().ok().map(|h| h.as_raw());
-        let ctx_attrs = ContextAttributesBuilder::new()
-            .with_context_api(ContextApi::Gles(Some(Version::new(3, 0))))
-            .build(raw);
-        let surf_attrs = window
-            .build_surface_attributes(Default::default())
-            .map_err(|e| e.to_string())?;
-
-        let (surface, ctx) = unsafe {
-            let not_current = display
-                .create_context(&config, &ctx_attrs)
-                .map_err(|e| format!("контекст OpenGL ES 3.0: {e}"))?;
-            let surface = display
-                .create_window_surface(&config, &surf_attrs)
-                .map_err(|e| e.to_string())?;
-            let ctx = not_current
-                .make_current(&surface)
-                .map_err(|e| e.to_string())?;
-            (surface, ctx)
-        };
 
         let _ = surface.set_swap_interval(&ctx, SwapInterval::Wait(NonZeroU32::new(1).unwrap()));
 
         let gl =
             unsafe { glow::Context::from_loader_function_cstr(|s| display.get_proc_address(s)) };
-        let (program, vao, u_rect, u_res, u_alpha, u_angle, u_corner, u_checker, u_chk0, u_chk1, max_tex) = unsafe {
+        let (
+            program,
+            vao,
+            u_rect,
+            u_res,
+            u_alpha,
+            u_angle,
+            u_corner,
+            u_checker,
+            u_chk0,
+            u_chk1,
+            max_tex,
+        ) = unsafe {
             let program = build_program(&gl)?;
             let vao = gl.create_vertex_array()?;
             let u_rect = gl.get_uniform_location(program, "u_rect");
@@ -178,7 +233,8 @@ impl Gpu {
             let u_chk1 = gl.get_uniform_location(program, "u_chk1");
             let max_tex = gl.get_parameter_i32(glow::MAX_TEXTURE_SIZE).max(1024) as u32;
             (
-                program, vao, u_rect, u_res, u_alpha, u_angle, u_corner, u_checker, u_chk0, u_chk1, max_tex,
+                program, vao, u_rect, u_res, u_alpha, u_angle, u_corner, u_checker, u_chk0, u_chk1,
+                max_tex,
             )
         };
 
@@ -198,11 +254,16 @@ impl Gpu {
             u_chk1,
             max_tex,
             win: (1, 1),
+            transparent,
             image: None,
             overlays: Default::default(),
             scratch_rgba: Vec::new(),
         };
         Ok((Rc::new(window), gpu))
+    }
+
+    pub fn is_transparent(&self) -> bool {
+        self.transparent
     }
 
     pub fn resize(&mut self, w: u32, h: u32) {
@@ -267,11 +328,12 @@ impl Gpu {
 
     pub fn begin(&mut self, w: u32, h: u32, corner: f32) {
         self.win = (w, h);
+        let eff_corner = if self.transparent { corner } else { 0.0 };
         unsafe {
             let gl = &self.gl;
             gl.viewport(0, 0, w as i32, h as i32);
             gl.disable(glow::SCISSOR_TEST);
-            gl.clear_color(0.0, 0.0, 0.0, 0.0);
+            gl.clear_color(0.0, 0.0, 0.0, if self.transparent { 0.0 } else { 1.0 });
             gl.clear(glow::COLOR_BUFFER_BIT);
             gl.enable(glow::BLEND);
             gl.blend_func_separate(
@@ -284,7 +346,7 @@ impl Gpu {
             gl.bind_vertex_array(Some(self.vao));
             gl.active_texture(glow::TEXTURE0);
             gl.uniform_2_f32(self.u_res.as_ref(), w as f32, h as f32);
-            gl.uniform_1_f32(self.u_corner.as_ref(), corner);
+            gl.uniform_1_f32(self.u_corner.as_ref(), eff_corner);
         }
     }
 
@@ -367,8 +429,6 @@ impl Gpu {
     }
 }
 
-
-
 unsafe fn upload(
     gl: &glow::Context,
     slot: &mut Option<Tex>,
@@ -396,7 +456,7 @@ unsafe fn upload(
         if let Some(old) = slot.take() {
             gl.delete_texture(old.id);
         }
-        let id = gl.create_texture().expect("не удалось создать текстуру");
+        let id = gl.create_texture().expect("failed to create texture");
         gl.bind_texture(glow::TEXTURE_2D, Some(id));
         let min = if mip {
             glow::LINEAR_MIPMAP_LINEAR
