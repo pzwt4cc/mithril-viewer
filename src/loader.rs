@@ -104,6 +104,7 @@ fn synthesize_symbols_grid(text: &str, ids: &[String]) -> Option<String> {
     Some(out)
 }
 
+#[allow(clippy::manual_checked_ops)]
 fn load_svg(path: &Path) -> Result<Loaded, Box<dyn Error>> {
     let mut data = std::fs::read(path)?;
     if data.starts_with(&[0x1f, 0x8b]) {

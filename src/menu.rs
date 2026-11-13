@@ -25,6 +25,7 @@ pub enum Action {
     Copy,
     Delete,
     Fullscreen,
+    ToggleFitToWindow,
     SetLanguage(&'static str),
     SetDeleteMode(DeleteMode),
     SetOpacity(u8),
@@ -75,9 +76,16 @@ fn delete_label(mode: DeleteMode) -> &'static str {
     }
 }
 
-pub fn context_entries(mode: DeleteMode) -> Vec<Entry> {
+pub fn context_entries(mode: DeleteMode, fit_to_window: bool) -> Vec<Entry> {
     vec![
         item(Action::ResetZoom, tr("menu.reset_zoom"), "0"),
+        Entry::Item {
+            action: Action::ToggleFitToWindow,
+            label: tr("menu.fit_window"),
+            hint: "",
+            checked: fit_to_window,
+        },
+        Entry::Separator,
         item(Action::RotateLeft, tr("menu.rotate_left"), "Shift+R"),
         item(Action::RotateRight, tr("menu.rotate_right"), "R"),
         item(Action::Crop, tr("menu.crop"), "C"),
@@ -223,6 +231,7 @@ pub struct SubmenuState {
 }
 
 impl SubmenuState {
+    #[allow(clippy::too_many_arguments)]
     pub fn new_dropdown(
         parent_index: usize,
         entries: Vec<Entry>,
@@ -633,7 +642,15 @@ impl Menu {
                             acc,
                         );
                     }
-                    cv.text(font, label, ix + 10.0 * s + indent, baseline, px, t.text);
+                    let check_offset = if *checked { 18.0 * s } else { 0.0 };
+                    cv.text(
+                        font,
+                        label,
+                        ix + 10.0 * s + indent + check_offset,
+                        baseline,
+                        px,
+                        t.text,
+                    );
                     if !hint.is_empty() {
                         let hw = text_width(font, hint, px);
                         cv.text(font, hint, ix + iw - 10.0 * s - hw, baseline, px, t.dim);

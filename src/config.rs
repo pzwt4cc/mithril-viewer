@@ -1,5 +1,5 @@
-use std::{env, fs, path::PathBuf};
 use crate::theme::ThemeMode;
+use std::{env, fs, path::PathBuf};
 
 #[derive(Clone, Copy, PartialEq)]
 pub enum DeleteMode {
@@ -12,6 +12,7 @@ pub struct Config {
     pub language: Option<String>,
     pub opacity: u8,
     pub theme: ThemeMode,
+    pub fit_to_window: bool,
 }
 
 impl Default for Config {
@@ -21,6 +22,7 @@ impl Default for Config {
             language: None,
             opacity: 100,
             theme: ThemeMode::System,
+            fit_to_window: false,
         }
     }
 }
@@ -71,6 +73,9 @@ pub fn load() -> Config {
             "theme" => {
                 cfg.theme = ThemeMode::parse(v);
             }
+            "fit_to_window" => {
+                cfg.fit_to_window = v.eq_ignore_ascii_case("true") || v == "1";
+            }
             _ => {}
         }
     }
@@ -89,10 +94,11 @@ pub fn save(cfg: &Config) {
     let lang = cfg.language.as_deref().unwrap_or("auto");
     let tmp = path.with_extension("conf.tmp");
     let theme_str = cfg.theme.as_str();
+    let fit_str = if cfg.fit_to_window { "true" } else { "false" };
     if fs::write(
         &tmp,
         format!(
-            "delete_mode = {mode}\nlanguage = {lang}\nopacity = {}\ntheme = {theme_str}\n",
+            "delete_mode = {mode}\nlanguage = {lang}\nopacity = {}\ntheme = {theme_str}\nfit_to_window = {fit_str}\n",
             cfg.opacity
         ),
     )

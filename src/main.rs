@@ -50,7 +50,7 @@ use menu::{Action, Menu};
 use modal::{BarAction, CropBar, CropField, Dialog, DialogAction};
 use nav::first_image;
 use ui::{draw_header, draw_sidebar, draw_start};
-use view::{View, fit_scale};
+use view::{View, fill_scale, fit_scale};
 
 const APP_ID: &str = "mithril-viewer";
 
@@ -145,6 +145,7 @@ struct Source {
     has_alpha: bool,
 }
 
+#[allow(clippy::manual_checked_ops)]
 fn logo_pixels(size: u32) -> Vec<u32> {
     let Ok(img) = image::load_from_memory_with_format(ICON_PNG, ImageFormat::Png) else {
         return Vec::new();
@@ -265,6 +266,7 @@ struct App {
 
 impl App {
     fn new(font: Fonts, config: Config, proxy: EventLoopProxy<UserEvent>) -> Self {
+        let fit = config.fit_to_window;
         Self {
             font,
             config,
@@ -277,7 +279,7 @@ impl App {
             info: None,
             image: None,
             anim: None,
-            view: View::default(),
+            view: View::new(fit),
             cursor: (0.0, 0.0),
             dragging: false,
             shift: false,
@@ -349,6 +351,14 @@ impl App {
         self.redraw();
     }
 
+    fn toggle_fit_to_window(&mut self) {
+        self.config.fit_to_window = !self.config.fit_to_window;
+        config::save(&self.config);
+        self.view.fit_to_window = self.config.fit_to_window;
+        self.view.reset();
+        self.redraw();
+    }
+
     fn layout(&self) -> Option<Layout> {
         let w = self.window.as_ref()?;
         let size = w.inner_size();
@@ -403,7 +413,7 @@ impl App {
                 self.rotation = 0;
                 self.header_hide = Fade::new(0.0);
                 self.drag_hide = Fade::new(0.0);
-                self.view = View::default();
+                self.view = View::new(self.config.fit_to_window);
                 self.angle = Fade::new(0.0);
                 self.appear = Fade { v: 0.0, to: 1.0 };
                 self.header_dirty = true;
@@ -579,7 +589,7 @@ impl App {
             self.settings_open = false;
             self.header_dirty = true;
         }
-        let entries = menu::context_entries(self.config.delete_mode);
+        let entries = menu::context_entries(self.config.delete_mode, self.config.fit_to_window);
         let anchor = (self.cursor.0 as i32, self.cursor.1 as i32);
         let mut menu = Menu::new(entries, anchor, lay.win, lay.scale, false);
         menu.update_cursor(self.cursor, &self.font);
@@ -660,6 +670,7 @@ impl App {
             Action::RotateRight => self.rotate(true),
             Action::Crop => self.start_crop(),
             Action::Fullscreen => self.toggle_fullscreen(),
+            Action::ToggleFitToWindow => self.toggle_fit_to_window(),
             Action::Print => self.print(),
             Action::Copy => self.copy_image(),
             Action::Delete => self.request_delete(),
@@ -770,7 +781,11 @@ impl App {
         }
         let vp = (vw, vh);
         let old = self.view.scale(imgd, vp);
-        let min = fit_scale(imgd, vp);
+        let min = if self.view.fit_to_window {
+            fill_scale(imgd, vp)
+        } else {
+            fit_scale(imgd, vp)
+        };
         let new = (old * ZOOM_STEP.powf(steps)).clamp(min, 32.0);
 
         let cx = px as f32 - (vx as f32 + vw as f32 / 2.0);

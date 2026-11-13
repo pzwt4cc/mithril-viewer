@@ -29,6 +29,7 @@ settings.delete = Löschmodus
 menu.crop = Zuschneiden
 menu.print = Drucken
 menu.fullscreen = Vollbild
+menu.fit_window = An Fenster anpassen
 crop.apply = Anwenden
 dialog.title = Änderungen speichern?
 dialog.text = Das Bild wurde geändert. Eine Kopie wird neben dem Original gespeichert.

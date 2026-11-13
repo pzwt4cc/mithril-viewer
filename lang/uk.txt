@@ -29,6 +29,7 @@ settings.delete = Режим видалення
 menu.crop = Обрізати
 menu.print = Друк
 menu.fullscreen = На весь екран
+menu.fit_window = За розміром вікна
 crop.apply = Застосувати
 dialog.title = Зберегти зміни?
 dialog.text = Зображення змінено. Копію буде збережено поруч із оригіналом.

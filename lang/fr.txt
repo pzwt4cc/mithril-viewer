@@ -29,6 +29,7 @@ settings.delete = Mode de suppression
 menu.crop = Rogner
 menu.print = Imprimer
 menu.fullscreen = Plein écran
+menu.fit_window = Ajuster à la fenêtre
 crop.apply = Appliquer
 dialog.title = Enregistrer les modifications ?
 dialog.text = L'image a été modifiée. Une copie sera enregistrée à côté de l'original.

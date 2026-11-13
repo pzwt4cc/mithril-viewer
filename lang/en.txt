@@ -29,6 +29,7 @@ settings.delete = Delete mode
 menu.crop = Crop
 menu.print = Print
 menu.fullscreen = Fullscreen
+menu.fit_window = Fit to window
 crop.apply = Apply
 dialog.title = Save changes?
 dialog.text = The image was changed. A copy will be saved next to the original.

@@ -200,6 +200,7 @@ pub fn draw_header(
     cv.line(cx - d, cy + d, cx + d, cy - d, 1.6 * s, t.text);
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn draw_row(
     cv: &mut Canvas,
     font: &Fonts,

@@ -2,17 +2,35 @@ pub fn fit_scale((iw, ih): (u32, u32), (w, h): (u32, u32)) -> f32 {
     (w as f32 / iw as f32).min(h as f32 / ih as f32).min(1.0)
 }
 
+pub fn fill_scale((iw, ih): (u32, u32), (w, h): (u32, u32)) -> f32 {
+    (w as f32 / iw as f32).min(h as f32 / ih as f32)
+}
+
 #[derive(Default)]
 pub struct View {
     pub zoom: Option<f32>,
     pub pan: (f32, f32),
     pub cur_scale: f32,
     pub cur_pan: (f32, f32),
+    pub fit_to_window: bool,
 }
 
 impl View {
+    pub fn new(fit_to_window: bool) -> Self {
+        Self {
+            fit_to_window,
+            ..Default::default()
+        }
+    }
+
     pub fn scale(&self, img: (u32, u32), vp: (u32, u32)) -> f32 {
-        self.zoom.unwrap_or_else(|| fit_scale(img, vp))
+        self.zoom.unwrap_or_else(|| {
+            if self.fit_to_window {
+                fill_scale(img, vp)
+            } else {
+                fit_scale(img, vp)
+            }
+        })
     }
 
     pub fn reset(&mut self) {
@@ -67,5 +85,22 @@ impl View {
             }
         }
         moving
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_fit_scale_modes() {
+        let small = (100, 100);
+        let vp = (800, 600);
+        assert_eq!(fit_scale(small, vp), 1.0);
+        assert_eq!(fill_scale(small, vp), 6.0);
+
+        let large = (1600, 1200);
+        assert_eq!(fit_scale(large, vp), 0.5);
+        assert_eq!(fill_scale(large, vp), 0.5);
     }
 }

@@ -106,6 +106,7 @@ impl Canvas<'_> {
         );
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn round_rect_alpha(&mut self, x: f32, y: f32, w: f32, h: f32, r: f32, c: Rgb, a: f32) {
         let (cx, cy) = (x + w / 2.0, y + h / 2.0);
         let (hx, hy) = (w / 2.0 - r, h / 2.0 - r);
