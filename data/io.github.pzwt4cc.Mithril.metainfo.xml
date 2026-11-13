@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>io.github.pzwt4cc.Mithril</id>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>MIT</project_license>
+  <name>Mithril Viewer</name>
+  <summary>Fast, minimal image viewer</summary>
+  <summary xml:lang="ru">Быстрый минималистичный просмотрщик изображений</summary>
+  <developer id="io.github.pzwt4cc">
+    <name>pzwt4cc</name>
+  </developer>
+  <description>
+    <p>Mithril Viewer is a fast, lightweight image viewer with a clean dark and light interface. It opens PNG, APNG, JPEG, GIF, WebP, BMP, SVG, AVIF, ICO, TIFF, and QOI files, including animated images.</p>
+    <p xml:lang="ru">Mithril Viewer — быстрый и лёгкий просмотрщик изображений с аккуратным тёмным и светлым интерфейсом. Открывает PNG, APNG, JPEG, GIF, WebP, BMP, SVG, AVIF, ICO, TIFF и QOI, включая анимированные изображения.</p>
+    <ul>
+      <li>Smooth cursor-centered zoom, panning, fit-to-window, and fullscreen viewing</li>
+      <li>Fast folder navigation with background neighbor image prefetching</li>
+      <li>Quick non-destructive edits: rotation, horizontal/vertical flip, and visual crop</li>
+      <li>Clipboard copy, CUPS printing, trash/delete confirmation, and set as desktop wallpaper</li>
+      <li>Drag-and-drop file opening and multi-language interface</li>
+    </ul>
+  </description>
+  <url type="homepage">https://github.com/pzwt4cc/mithril-viewer</url>
+  <url type="bugtracker">https://github.com/pzwt4cc/mithril-viewer/issues</url>
+  <url type="vcs-browser">https://github.com/pzwt4cc/mithril-viewer</url>
+  <launchable type="desktop-id">io.github.pzwt4cc.Mithril.desktop</launchable>
+  <provides>
+    <binary>mithril-viewer</binary>
+  </provides>
+  <branding>
+    <color type="primary" scheme_preference="light">#d8e2f0</color>
+    <color type="primary" scheme_preference="dark">#1b1f27</color>
+  </branding>
+  <categories>
+    <category>Graphics</category>
+    <category>Viewer</category>
+  </categories>
+  <content_rating type="oars-1.1"/>
+  <releases>
+    <release version="0.1.0" date="2026-11-13">
+      <description>
+        <p>Initial release with broad raster/vector/animated format support, smooth zoom and pan, non-destructive rotate/flip/crop, neighbor prefetching, printing, and wallpaper integration.</p>
+      </description>
+    </release>
+  </releases>
+</component>

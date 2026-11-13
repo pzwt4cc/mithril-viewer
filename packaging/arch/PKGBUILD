@@ -1,0 +1,78 @@
+# Maintainer: pzwt4cc
+pkgname=mithril-viewer-git
+_pkgname=mithril-viewer
+_appid=io.github.pzwt4cc.Mithril
+pkgver=0.1.0
+pkgrel=1
+pkgdesc='Fast, minimal GPU-accelerated image viewer'
+arch=('x86_64' 'aarch64')
+url='https://github.com/pzwt4cc/mithril-viewer'
+license=('MIT' 'OFL-1.1')
+depends=(
+  'dav1d'
+  'fontconfig'
+  'gcc-libs'
+  'glibc'
+  'hicolor-icon-theme'
+  'libglvnd'
+  'libx11'
+  'libxkbcommon'
+  'wayland'
+)
+makedepends=('cargo' 'git')
+optdepends=(
+  'cups: printing support'
+  'feh: set wallpaper on X11 window managers'
+  'hyprpaper: set wallpaper on Hyprland'
+  'swaybg: set wallpaper on wlroots compositors'
+  'swww: set wallpaper on Wayland compositors'
+  'xdg-desktop-portal: file chooser for the Open and Save dialogs'
+  'xdg-utils: open the containing folder'
+)
+provides=("$_pkgname")
+conflicts=("$_pkgname")
+source=("$_pkgname::git+$url.git")
+sha256sums=('SKIP')
+
+pkgver() {
+  cd "$_pkgname"
+  local ver
+  ver=$(grep -m1 '^version' Cargo.toml | cut -d'"' -f2)
+  printf '%s.r%s.g%s' "$ver" "$(git rev-list --count HEAD)" "$(git rev-parse --short=7 HEAD)"
+}
+
+prepare() {
+  cd "$_pkgname"
+  export RUSTUP_TOOLCHAIN=stable
+  cargo fetch --locked --target "$(rustc -vV | sed -n 's/host: //p')"
+}
+
+build() {
+  cd "$_pkgname"
+  export RUSTUP_TOOLCHAIN=stable
+  export CARGO_TARGET_DIR=target
+  export RUSTFLAGS="${RUSTFLAGS:-} --remap-path-prefix=$srcdir=src"
+  cargo build --frozen --release
+}
+
+package() {
+  cd "$_pkgname"
+
+  install -Dm755 "target/release/$_pkgname" "$pkgdir/usr/bin/$_pkgname"
+
+  install -Dm644 "data/${_appid}.desktop" \
+    "$pkgdir/usr/share/applications/${_appid}.desktop"
+  install -Dm644 "data/${_appid}.metainfo.xml" \
+    "$pkgdir/usr/share/metainfo/${_appid}.metainfo.xml"
+
+  install -Dm644 "data/icons/hicolor/scalable/apps/${_appid}.svg" \
+    "$pkgdir/usr/share/icons/hicolor/scalable/apps/${_appid}.svg"
+  for size in 16 24 32 48 64 128 256 512; do
+    install -Dm644 "data/icons/hicolor/${size}x${size}/apps/${_appid}.png" \
+      "$pkgdir/usr/share/icons/hicolor/${size}x${size}/apps/${_appid}.png"
+  done
+
+  install -Dm644 LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+  # Bundled Inter font license (SIL Open Font License 1.1)
+  install -Dm644 assets/OFL.txt "$pkgdir/usr/share/licenses/$pkgname/OFL.txt"
+}

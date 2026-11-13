@@ -1,0 +1,23 @@
+[Desktop Entry]
+Type=Application
+Name=Mithril Viewer
+GenericName=Image Viewer
+GenericName[de]=Bildbetrachter
+GenericName[es]=Visor de imágenes
+GenericName[fr]=Visionneuse d’images
+GenericName[ru]=Просмотрщик изображений
+GenericName[uk]=Переглядач зображень
+Comment=Fast, minimal image viewer
+Comment[de]=Schneller, minimalistischer Bildbetrachter
+Comment[es]=Visor de imágenes rápido y minimalista
+Comment[fr]=Visionneuse d’images rapide et minimaliste
+Comment[ru]=Быстрый минималистичный просмотрщик изображений
+Comment[uk]=Швидкий мінімалістичний переглядач зображень
+Exec=mithril-viewer %f
+Icon=io.github.pzwt4cc.Mithril
+Terminal=false
+Categories=Graphics;Viewer;2DGraphics;RasterGraphics;VectorGraphics;
+MimeType=image/png;image/apng;image/jpeg;image/gif;image/webp;image/bmp;image/svg+xml;image/svg+xml-compressed;image/avif;image/x-icon;image/vnd.microsoft.icon;image/tiff;image/x-qoi;
+Keywords=image;picture;photo;viewer;gif;png;apng;jpeg;webp;bmp;svg;avif;ico;tiff;qoi;
+Keywords[ru]=изображение;картинка;фото;просмотр;
+StartupWMClass=io.github.pzwt4cc.Mithril
