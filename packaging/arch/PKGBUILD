@@ -1,7 +1,7 @@
 # Maintainer: pzwt4cc
 pkgname=mithril-viewer-git
 _pkgname=mithril-viewer
-_appid=io.github.pzwt4cc.Mithril
+_appid=io.github.pzwt4cc.mithril-viewer
 pkgver=0.1.0
 pkgrel=1
 pkgdesc='Fast, minimal GPU-accelerated image viewer'

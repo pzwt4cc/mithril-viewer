@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <component type="desktop-application">
-  <id>io.github.pzwt4cc.Mithril</id>
+  <id>io.github.pzwt4cc.mithril-viewer</id>
   <metadata_license>CC0-1.0</metadata_license>
   <project_license>MIT</project_license>
   <name>Mithril Viewer</name>
@@ -40,7 +40,7 @@
   <url type="homepage">https://github.com/pzwt4cc/mithril-viewer</url>
   <url type="bugtracker">https://github.com/pzwt4cc/mithril-viewer/issues</url>
   <url type="vcs-browser">https://github.com/pzwt4cc/mithril-viewer</url>
-  <launchable type="desktop-id">io.github.pzwt4cc.Mithril.desktop</launchable>
+  <launchable type="desktop-id">io.github.pzwt4cc.mithril-viewer.desktop</launchable>
   <provides>
     <binary>mithril-viewer</binary>
   </provides>

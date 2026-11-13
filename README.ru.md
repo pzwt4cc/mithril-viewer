@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="data/icons/hicolor/512x512/apps/io.github.pzwt4cc.Mithril.png" alt="Логотип Mithril Viewer" width="140">
+<img src="data/icons/hicolor/512x512/apps/io.github.pzwt4cc.mithril-viewer.png" alt="Логотип Mithril Viewer" width="140">
 
 # Mithril Viewer
 
@@ -60,8 +60,8 @@ cargo build --release
 
 ```sh
 sudo install -Dm755 target/release/mithril-viewer /usr/local/bin/mithril-viewer
-sudo install -Dm644 data/io.github.pzwt4cc.Mithril.desktop /usr/local/share/applications/io.github.pzwt4cc.Mithril.desktop
-sudo install -Dm644 data/io.github.pzwt4cc.Mithril.metainfo.xml /usr/local/share/metainfo/io.github.pzwt4cc.Mithril.metainfo.xml
+sudo install -Dm644 data/io.github.pzwt4cc.mithril-viewer.desktop /usr/local/share/applications/io.github.pzwt4cc.mithril-viewer.desktop
+sudo install -Dm644 data/io.github.pzwt4cc.mithril-viewer.metainfo.xml /usr/local/share/metainfo/io.github.pzwt4cc.mithril-viewer.metainfo.xml
 sudo cp -r data/icons/hicolor /usr/local/share/icons/
 sudo gtk-update-icon-cache -f /usr/local/share/icons/hicolor 2>/dev/null || true
 ```

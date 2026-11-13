@@ -55,9 +55,9 @@ use nav::first_image;
 use ui::{draw_header, draw_sidebar, draw_start};
 use view::{View, fill_scale, fit_scale};
 
-const APP_ID: &str = "io.github.pzwt4cc.Mithril";
+const APP_ID: &str = "io.github.pzwt4cc.mithril-viewer";
 
-static ICON_PNG: &[u8] = include_bytes!("../data/icons/hicolor/256x256/apps/io.github.pzwt4cc.Mithril.png");
+static ICON_PNG: &[u8] = include_bytes!("../data/icons/hicolor/256x256/apps/io.github.pzwt4cc.mithril-viewer.png");
 
 fn window_icon() -> Option<Icon> {
     let img = image::load_from_memory_with_format(ICON_PNG, ImageFormat::Png)
