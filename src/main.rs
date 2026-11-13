@@ -31,7 +31,7 @@ use winit::{
     event::{MouseButton, MouseScrollDelta, WindowEvent},
     event_loop::{ActiveEventLoop, ControlFlow, EventLoop, EventLoopProxy},
     keyboard::{KeyCode, PhysicalKey},
-    window::{CursorIcon, Icon, ResizeDirection, Window, WindowId},
+    window::{CursorIcon, Fullscreen, Icon, ResizeDirection, Window, WindowId},
 };
 
 use anim::Anim;
@@ -230,7 +230,7 @@ struct App {
     header_hide: Fade,
     drag_hide: Fade,
     hover: Option<Hit>,
-    fades: [Fade; 7],
+    fades: [Fade; 8],
     appear: Fade,
     angle: Fade,
     cursor_icon: CursorIcon,
@@ -286,7 +286,7 @@ impl App {
             header_hide: Fade::new(0.0),
             drag_hide: Fade::new(0.0),
             hover: None,
-            fades: [Fade::new(0.0); 7],
+            fades: [Fade::new(0.0); 8],
             appear: Fade { v: 0.0, to: 1.0 },
             angle: Fade::new(0.0),
             cursor_icon: CursorIcon::Default,
@@ -332,6 +332,18 @@ impl App {
 
     fn toggle_sidebar(&mut self) {
         self.side.to = if self.sidebar_open() { 0.0 } else { 1.0 };
+        self.header_dirty = true;
+        self.sidebar_dirty = true;
+        self.redraw();
+    }
+
+    fn toggle_fullscreen(&mut self) {
+        let Some(win) = &self.window else { return };
+        if win.fullscreen().is_some() {
+            win.set_fullscreen(None);
+        } else {
+            win.set_fullscreen(Some(Fullscreen::Borderless(None)));
+        }
         self.header_dirty = true;
         self.sidebar_dirty = true;
         self.redraw();
@@ -647,6 +659,7 @@ impl App {
             Action::RotateLeft => self.rotate(false),
             Action::RotateRight => self.rotate(true),
             Action::Crop => self.start_crop(),
+            Action::Fullscreen => self.toggle_fullscreen(),
             Action::Print => self.print(),
             Action::Copy => self.copy_image(),
             Action::Delete => self.request_delete(),
@@ -809,7 +822,7 @@ impl App {
             window.request_redraw();
         }
 
-        let mut icon = if window.is_maximized() || self.dialog.is_some() {
+        let mut icon = if window.is_maximized() || window.fullscreen().is_some() || self.dialog.is_some() {
             CursorIcon::Default
         } else {
             edge_dir(self.cursor, lay.win, (EDGE * lay.scale) as f64)
@@ -1436,6 +1449,7 @@ impl App {
         if self.header_dirty {
             self.header_dirty = false;
             let mut hb = vec![0u32; (w * hh) as usize];
+            let is_fullscreen = self.window.as_ref().is_some_and(|w| w.fullscreen().is_some());
             draw_header(
                 &mut Canvas {
                     px: &mut hb,
@@ -1452,6 +1466,7 @@ impl App {
                 &self.fades,
                 self.side.v,
                 self.settings_open,
+                is_fullscreen,
             );
             header = Some(hb);
         }
@@ -1967,6 +1982,8 @@ impl ApplicationHandler<UserEvent> for App {
                             self.cancel_crop();
                         } else if self.menu.is_some() {
                             self.close_menu();
+                        } else if self.window.as_ref().is_some_and(|w| w.fullscreen().is_some()) {
+                            self.toggle_fullscreen();
                         } else {
                             self.request_exit(el);
                         }
@@ -2046,6 +2063,10 @@ impl ApplicationHandler<UserEvent> for App {
                         self.nav_key(-1, event.repeat);
                     }
                     PhysicalKey::Code(KeyCode::KeyI) => self.toggle_sidebar(),
+                    PhysicalKey::Code(KeyCode::F11) => {
+                        self.close_menu();
+                        self.toggle_fullscreen();
+                    }
                     _ => {}
                 }
             }
@@ -2152,6 +2173,7 @@ impl ApplicationHandler<UserEvent> for App {
                     return;
                 };
                 if !window.is_maximized()
+                    && window.fullscreen().is_none()
                     && let Some(dir) = edge_dir(self.cursor, lay.win, (EDGE * lay.scale) as f64) {
                         let _ = window.drag_resize_window(dir);
                         return;
@@ -2220,12 +2242,13 @@ impl ApplicationHandler<UserEvent> for App {
                 }
                 match lay.hit(self.cursor) {
                     Some(Hit::Close) => self.request_exit(el),
+                    Some(Hit::Fullscreen) => self.toggle_fullscreen(),
                     Some(Hit::Info) => self.toggle_sidebar(),
                     Some(Hit::More) => self.open_settings(),
                     Some(Hit::OpenFolder) => self.open_folder(),
                     Some(Hit::Open | Hit::StartFolder) => self.pick_folder(),
                     Some(Hit::Start) => self.pick_file(),
-                    None if self.cursor.1 < lay.top_h as f64 => {
+                    None if self.cursor.1 < lay.top_h as f64 && self.window.as_ref().is_some_and(|w| w.fullscreen().is_none()) => {
                         let _ = window.drag_window();
                     }
                     None if self.cursor.0 < (lay.win.0 as i32 - lay.sidebar_w) as f64 => {

@@ -28,6 +28,7 @@ settings.auto = Automatic
 settings.delete = Delete mode
 menu.crop = Crop
 menu.print = Print
+menu.fullscreen = Fullscreen
 crop.apply = Apply
 dialog.title = Save changes?
 dialog.text = The image was changed. A copy will be saved next to the original.

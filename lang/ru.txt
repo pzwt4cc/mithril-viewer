@@ -28,6 +28,7 @@ settings.auto = Автоматически
 settings.delete = Режим удаления
 menu.crop = Обрезать
 menu.print = Печать
+menu.fullscreen = Во весь экран
 crop.apply = Применить
 dialog.title = Сохранить изменения?
 dialog.text = Изображение изменено. Копия будет сохранена рядом с оригиналом.

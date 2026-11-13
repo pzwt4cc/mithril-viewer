@@ -32,6 +32,7 @@ pub enum Hit {
     Open,
     Start,
     StartFolder,
+    Fullscreen,
 }
 
 impl Hit {
@@ -77,7 +78,8 @@ impl Layout {
 
     pub fn capsule(&self) -> (f32, f32, f32, f32) {
         let s = self.scale;
-        let w = (BTN_S * 4.0 + BTN_GAP * 3.0 + CAP_PAD * 2.0) * s;
+        let count = if self.empty { 4.0 } else { 5.0 };
+        let w = (BTN_S * count + BTN_GAP * (count - 1.0) + CAP_PAD * 2.0) * s;
         (
             self.win.0 as f32 - MARGIN * s - w,
             MARGIN * s,
@@ -95,20 +97,24 @@ impl Layout {
         )
     }
 
-    pub fn open_center(&self) -> (f32, f32) {
+    pub fn fullscreen_center(&self) -> (f32, f32) {
         self.btn_center(0)
     }
 
+    pub fn open_center(&self) -> (f32, f32) {
+        self.btn_center(if self.empty { 0 } else { 1 })
+    }
+
     pub fn info_center(&self) -> (f32, f32) {
-        self.btn_center(1)
+        self.btn_center(if self.empty { 1 } else { 2 })
     }
 
     pub fn more_center(&self) -> (f32, f32) {
-        self.btn_center(2)
+        self.btn_center(if self.empty { 2 } else { 3 })
     }
 
     pub fn close_center(&self) -> (f32, f32) {
-        self.btn_center(3)
+        self.btn_center(if self.empty { 3 } else { 4 })
     }
 
     pub fn title_max_w(&self) -> f32 {
@@ -240,6 +246,8 @@ impl Layout {
             Some(Hit::Info)
         } else if near(self.open_center()) {
             Some(Hit::Open)
+        } else if !self.empty && near(self.fullscreen_center()) {
+            Some(Hit::Fullscreen)
         } else if self.empty && inside(self.start_btn()) {
             Some(Hit::Start)
         } else if self.empty && inside(self.start_btn2()) {

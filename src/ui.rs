@@ -8,6 +8,7 @@ use crate::{
     surface, theme,
 };
 
+#[allow(clippy::too_many_arguments)]
 pub fn draw_header(
     cv: &mut Canvas,
     font: &Fonts,
@@ -15,9 +16,10 @@ pub fn draw_header(
     info: Option<&Info>,
     siblings_count: usize,
     index: usize,
-    fades: &[Fade; 7],
+    fades: &[Fade; 8],
     side_v: f32,
     settings_open: bool,
+    fullscreen: bool,
 ) {
     let s = lay.scale;
     let t = theme::current();
@@ -105,6 +107,43 @@ pub fn draw_header(
         )
     };
 
+    if !lay.empty {
+        let (fx, fy) = lay.fullscreen_center();
+        let fsv = fades[Hit::Fullscreen.index()].v;
+        let fs_active = if fullscreen { 1.0 } else { 0.0 };
+        btn(
+            &mut *cv,
+            (fx, fy),
+            lerp(t.hover, t.active, fs_active),
+            fsv.max(fs_active),
+        );
+        let fc = lerp(t.text, t.accent, fs_active);
+        if fullscreen {
+            let d1 = 1.6 * s;
+            let d2 = 4.8 * s;
+            cv.line(fx - d1, fy - d1, fx - d2, fy - d1, 1.5 * s, fc);
+            cv.line(fx - d1, fy - d1, fx - d1, fy - d2, 1.5 * s, fc);
+            cv.line(fx + d1, fy - d1, fx + d2, fy - d1, 1.5 * s, fc);
+            cv.line(fx + d1, fy - d1, fx + d1, fy - d2, 1.5 * s, fc);
+            cv.line(fx - d1, fy + d1, fx - d2, fy + d1, 1.5 * s, fc);
+            cv.line(fx - d1, fy + d1, fx - d1, fy + d2, 1.5 * s, fc);
+            cv.line(fx + d1, fy + d1, fx + d2, fy + d1, 1.5 * s, fc);
+            cv.line(fx + d1, fy + d1, fx + d1, fy + d2, 1.5 * s, fc);
+        } else {
+            let d = 5.2 * s;
+            let a = 3.2 * s;
+            cv.line(fx - d, fy - d, fx - d + a, fy - d, 1.5 * s, fc);
+            cv.line(fx - d, fy - d, fx - d, fy - d + a, 1.5 * s, fc);
+            cv.line(fx + d, fy - d, fx + d - a, fy - d, 1.5 * s, fc);
+            cv.line(fx + d, fy - d, fx + d, fy - d + a, 1.5 * s, fc);
+            cv.line(fx - d, fy + d, fx - d + a, fy + d, 1.5 * s, fc);
+            cv.line(fx - d, fy + d, fx - d, fy + d - a, 1.5 * s, fc);
+            cv.line(fx + d, fy + d, fx + d - a, fy + d, 1.5 * s, fc);
+            cv.line(fx + d, fy + d, fx + d, fy + d - a, 1.5 * s, fc);
+        }
+    
+    }
+
     let (ox, oy) = lay.open_center();
     let ov = fades[Hit::Open.index()].v;
     btn(&mut *cv, (ox, oy), t.hover, ov);
@@ -185,7 +224,7 @@ pub fn draw_sidebar(
     font: &Fonts,
     lay: &Layout,
     info: Option<&Info>,
-    fades: &[Fade; 7],
+    fades: &[Fade; 8],
 ) {
     let s = lay.scale;
     let t = theme::current();
