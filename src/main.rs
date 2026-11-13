@@ -1472,6 +1472,7 @@ impl App {
                     h: hh,
                     ox: 0,
                     oy: 0,
+                    clip: None,
                 },
                 &self.font,
                 &lay,
@@ -1499,6 +1500,7 @@ impl App {
                         h: sh,
                         ox: w as i32 - lay.sidebar_full,
                         oy: lay.side_oy(),
+                        clip: None,
                     },
                     &self.font,
                     &lay,
@@ -1523,6 +1525,7 @@ impl App {
                         h: mh,
                         ox: bx,
                         oy: by,
+                        clip: None,
                     },
                     &self.font,
                 );
@@ -1552,6 +1555,7 @@ impl App {
                         h: bh,
                         ox: 0,
                         oy: 0,
+                        clip: None,
                     };
                     let (fw, fh) = (bw as f32 - 2.0 * pad, bh as f32 - 2.0 * pad);
                     surface(&mut cv, pad, pad, fw, fh, R_PILL * s, s);
@@ -1602,6 +1606,7 @@ impl App {
                         h: bh,
                         ox: -pad,
                         oy: -pad,
+                        clip: None,
                     },
                     &self.font,
                 );
@@ -1622,6 +1627,7 @@ impl App {
                         h: dh,
                         ox: -pad,
                         oy: -pad,
+                        clip: None,
                     },
                     &self.font,
                 );
@@ -1650,6 +1656,7 @@ impl App {
                         h: rh,
                         ox: rx,
                         oy: ry,
+                        clip: None,
                     },
                     &lay,
                 );
@@ -1690,6 +1697,7 @@ impl App {
                         h: eh,
                         ox: ex,
                         oy: ey,
+                        clip: None,
                     },
                     &self.font,
                     &lay,
@@ -2112,7 +2120,20 @@ impl ApplicationHandler<UserEvent> for App {
                 if self.dialog.is_some() {
                     return;
                 }
-                if self.menu.is_some() {
+                if let Some(menu) = &mut self.menu {
+                    let steps = match delta {
+                        MouseScrollDelta::LineDelta(_, y) => y,
+                        MouseScrollDelta::PixelDelta(p) => p.y as f32 / 40.0,
+                    };
+                    if menu.scroll(steps) {
+                        menu.update_cursor(self.cursor, &self.font);
+                        self.menu_dirty = true;
+                        self.redraw();
+                        return;
+                    }
+                    if menu.contains(self.cursor) {
+                        return;
+                    }
                     self.close_menu();
                     return;
                 }

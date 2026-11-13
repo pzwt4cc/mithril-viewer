@@ -224,6 +224,9 @@ pub struct SubmenuState {
     pub y: i32,
     pub w: i32,
     pub h: i32,
+    pub content_h: f32,
+    pub scroll_y: f32,
+    pub scroll_target: f32,
     pub entries: Vec<Entry>,
     tops: Vec<f32>,
     fades: Vec<Fade>,
@@ -244,11 +247,14 @@ impl SubmenuState {
         font: &Fonts,
     ) -> Self {
         let mut tops = Vec::with_capacity(entries.len());
-        let mut y = MENU_PAD;
+        let mut total_h = MENU_PAD;
         for e in &entries {
-            tops.push(y);
-            y += height(e);
+            tops.push(total_h);
+            total_h += height(e);
         }
+        total_h += MENU_PAD;
+        let content_h = total_h * scale;
+
         let px = 14.0 * scale;
         let max_tw = entries
             .iter()
@@ -257,25 +263,30 @@ impl SubmenuState {
                 _ => 0.0,
             })
             .fold(0.0, f32::max);
+        let margin = (6.0 * scale).round() as i32;
+        let max_w = (win.0 as i32 - 2 * margin).max(120);
         let w = (max_tw + 52.0 * scale)
             .max(button_w as f32)
             .max(130.0 * scale)
             .round() as i32;
-        let h = ((y + MENU_PAD) * scale).round() as i32;
+        let w = w.min(max_w);
+
+        let max_h = (win.1 as i32 - 2 * margin).max((ITEM_H * 2.0 * scale).round() as i32);
+        let h = (content_h.round() as i32).min(max_h);
         let gap = (4.0 * scale).round() as i32;
 
         let right_x = button_x + button_w;
         let mut x = right_x - w;
-        if x < parent_x {
+        if x < parent_x && parent_x + w <= win.0 as i32 - margin {
             x = parent_x;
         }
-        let x = x.clamp(0, (win.0 as i32 - w).max(0));
+        let x = x.clamp(margin, (win.0 as i32 - w - margin).max(margin));
 
         let mut y = item_y + (ITEM_H * scale).round() as i32 + gap;
-        if y + h > win.1 as i32 - 10 {
+        if y + h > win.1 as i32 - margin && item_y - h - gap >= margin {
             y = item_y - h - gap;
         }
-        let y = y.clamp(0, (win.1 as i32 - h).max(0));
+        let y = y.clamp(margin, (win.1 as i32 - h - margin).max(margin));
 
         let fades = vec![Fade::new(0.0); entries.len()];
         Self {
@@ -284,6 +295,9 @@ impl SubmenuState {
             y,
             w,
             h,
+            content_h,
+            scroll_y: 0.0,
+            scroll_target: 0.0,
             entries,
             tops,
             fades,
@@ -296,7 +310,7 @@ impl SubmenuState {
         if px < 0.0 || px >= self.w as f64 || py < 0.0 || py >= self.h as f64 {
             return None;
         }
-        let rel = (py / scale as f64) as f32;
+        let rel = ((py + self.scroll_y as f64) / scale as f64) as f32;
         for (i, e) in self.entries.iter().enumerate() {
             let top = self.tops[i];
             if rel >= top && rel < top + height(e) {
@@ -313,6 +327,21 @@ impl SubmenuState {
             _ => None,
         }
     }
+
+    pub fn step(&mut self, dt: f32) -> bool {
+        let mut moved = false;
+        for f in self.fades.iter_mut() {
+            moved |= f.step(dt, 24.0);
+        }
+        if (self.scroll_target - self.scroll_y).abs() > 0.1 {
+            let factor = 1.0 - (-24.0 * dt).exp();
+            self.scroll_y += (self.scroll_target - self.scroll_y) * factor;
+            moved = true;
+        } else {
+            self.scroll_y = self.scroll_target;
+        }
+        moved
+    }
 }
 
 pub struct Menu {
@@ -320,6 +349,9 @@ pub struct Menu {
     pub y: i32,
     pub w: i32,
     pub h: i32,
+    pub content_h: f32,
+    pub scroll_y: f32,
+    pub scroll_target: f32,
     pub hover: Option<usize>,
     pub appear: Fade,
     pub entries: Vec<Entry>,
@@ -328,6 +360,7 @@ pub struct Menu {
     scale: f32,
     win: (u32, u32),
     pub submenu: Option<SubmenuState>,
+    last_cursor: (f64, f64),
 }
 
 impl Menu {
@@ -339,28 +372,52 @@ impl Menu {
         align_right: bool,
     ) -> Self {
         let mut tops = Vec::with_capacity(entries.len());
-        let mut y = MENU_PAD;
+        let mut total_h = MENU_PAD;
         for e in &entries {
-            tops.push(y);
-            y += height(e);
+            tops.push(total_h);
+            total_h += height(e);
         }
+        total_h += MENU_PAD;
+        let content_h = total_h * scale;
+
         let is_settings = entries.iter().any(|e| matches!(e, Entry::Submenu { .. }));
         let base_w = if is_settings {
             SETTINGS_MENU_W
         } else {
             CONTEXT_MENU_W
         };
-        let w = (base_w * scale).round() as i32;
-        let h = ((y + MENU_PAD) * scale).round() as i32;
-        let ax = if align_right { anchor.0 - w } else { anchor.0 };
-        let x = ax.min(win.0 as i32 - w).max(0);
-        let y = anchor.1.min(win.1 as i32 - h).max(0);
+        let margin = (6.0 * scale).round() as i32;
+        let max_w = (win.0 as i32 - 2 * margin).max(120);
+        let w = ((base_w * scale).round() as i32).min(max_w);
+
+        let max_h = (win.1 as i32 - 2 * margin).max((ITEM_H * 2.0 * scale).round() as i32);
+        let h = (content_h.round() as i32).min(max_h);
+
+        let x = if align_right {
+            (anchor.0 - w).clamp(margin, (win.0 as i32 - w - margin).max(margin))
+        } else {
+            let mut ax = anchor.0;
+            if ax + w > win.0 as i32 - margin && anchor.0 - w >= margin {
+                ax = anchor.0 - w;
+            }
+            ax.clamp(margin, (win.0 as i32 - w - margin).max(margin))
+        };
+
+        let mut ay = anchor.1;
+        if ay + h > win.1 as i32 - margin && anchor.1 - h >= margin {
+            ay = anchor.1 - h;
+        }
+        let y = ay.clamp(margin, (win.1 as i32 - h - margin).max(margin));
+
         let fades = vec![Fade::new(0.0); entries.len()];
         Self {
             x,
             y,
             w,
             h,
+            content_h,
+            scroll_y: 0.0,
+            scroll_target: 0.0,
             hover: None,
             appear: Fade { v: 0.0, to: 1.0 },
             entries,
@@ -369,6 +426,7 @@ impl Menu {
             scale,
             win,
             submenu: None,
+            last_cursor: (anchor.0 as f64, anchor.1 as f64),
         }
     }
 
@@ -435,7 +493,7 @@ impl Menu {
             let ix = self.x as f32 + MENU_PAD * s;
             let iw = self.w as f32 - 2.0 * MENU_PAD * s;
             let btn_x = ix + iw - btn_w - 4.0 * s;
-            let iy = self.y as f32 + self.tops[idx] * s;
+            let iy = self.y as f32 + self.tops[idx] * s - self.scroll_y;
             let ih = ITEM_H * s;
             let btn_y = iy + (ih - btn_h) / 2.0;
             Some((
@@ -470,7 +528,7 @@ impl Menu {
                     self.submenu = None;
                     return true;
                 }
-                let item_y = self.y + (self.tops[idx] * self.scale).round() as i32;
+                let item_y = self.y + (self.tops[idx] * self.scale - self.scroll_y).round() as i32;
                 let (btn_x, _btn_y, btn_w, _btn_h) = self
                     .dropdown_button_geometry(idx, font)
                     .unwrap_or((self.x + self.w - 80, item_y, 80, 24));
@@ -494,7 +552,49 @@ impl Menu {
         false
     }
 
+    pub fn scroll(&mut self, dy: f32) -> bool {
+        let inside_sub = self.submenu.as_ref().is_some_and(|sub| {
+            let (cx, cy) = self.last_cursor;
+            cx >= sub.x as f64
+                && cx < (sub.x + sub.w) as f64
+                && cy >= sub.y as f64
+                && cy < (sub.y + sub.h) as f64
+        });
+        if inside_sub
+            && let Some(sub) = &mut self.submenu
+            && sub.content_h > sub.h as f32
+        {
+            let max_scroll = sub.content_h - sub.h as f32;
+            let old = sub.scroll_target;
+            sub.scroll_target =
+                (sub.scroll_target - dy * 36.0 * self.scale).clamp(0.0, max_scroll);
+            if (old - sub.scroll_target).abs() > 0.1 {
+                return true;
+            }
+        }
+
+        if self.content_h > self.h as f32 {
+            let max_scroll = self.content_h - self.h as f32;
+            let old = self.scroll_target;
+            self.scroll_target =
+                (self.scroll_target - dy * 36.0 * self.scale).clamp(0.0, max_scroll);
+            if (old - self.scroll_target).abs() > 0.1 {
+                if self.submenu.is_some() {
+                    self.submenu = None;
+                }
+                return true;
+            }
+        }
+        false
+    }
+
     pub fn update_cursor(&mut self, p: (f64, f64), _font: &Fonts) -> bool {
+        self.last_cursor = p;
+        self.update_hover(p.0, p.1)
+    }
+
+    fn update_hover(&mut self, px: f64, py: f64) -> bool {
+        let p = (px, py);
         let mut changed = false;
 
         if let Some(sub) = &mut self.submenu {
@@ -539,10 +639,19 @@ impl Menu {
         for f in self.fades.iter_mut() {
             moved |= f.step(dt, 24.0);
         }
+        if (self.scroll_target - self.scroll_y).abs() > 0.1 {
+            let factor = 1.0 - (-24.0 * dt).exp();
+            self.scroll_y += (self.scroll_target - self.scroll_y) * factor;
+            moved = true;
+        } else {
+            self.scroll_y = self.scroll_target;
+        }
         if let Some(sub) = &mut self.submenu {
-            for f in sub.fades.iter_mut() {
-                moved |= f.step(dt, 24.0);
-            }
+            moved |= sub.step(dt);
+        }
+        if moved {
+            let (cx, cy) = self.last_cursor;
+            self.update_hover(cx, cy);
         }
         moved
     }
@@ -552,7 +661,7 @@ impl Menu {
         if px < 0.0 || px >= self.w as f64 || py < 0.0 || py >= self.h as f64 {
             return None;
         }
-        let rel = (py / self.scale as f64) as f32;
+        let rel = ((py + self.scroll_y as f64) / self.scale as f64) as f32;
         for (i, e) in self.entries.iter().enumerate() {
             let top = self.tops[i];
             if rel >= top && rel < top + height(e) {
@@ -567,9 +676,10 @@ impl Menu {
 
     pub fn action_under(&self, p: (f64, f64)) -> Option<Action> {
         if let Some(sub) = &self.submenu
-            && let Some(act) = sub.action_under(p, self.scale) {
-                return Some(act);
-            }
+            && let Some(act) = sub.action_under(p, self.scale)
+        {
+            return Some(act);
+        }
         let i = self.item_at(p)?;
         match self.entries.get(i)? {
             Entry::Item { action, .. } => Some(*action),
@@ -583,6 +693,12 @@ impl Menu {
         let (mx, my, mw, mh) = (self.x as f32, self.y as f32, self.w as f32, self.h as f32);
         surface(cv, mx, my, mw, mh, R_MENU * s, s);
 
+        let clip_x = self.x;
+        let clip_y = self.y + (MENU_PAD * s).round() as i32;
+        let clip_w = self.w;
+        let clip_h = (self.h as f32 - 2.0 * MENU_PAD * s).round() as i32;
+        cv.clip = Some([clip_x, clip_y, clip_w, clip_h]);
+
         let ix = self.x as f32 + MENU_PAD * s;
         let iw = self.w as f32 - 2.0 * MENU_PAD * s;
         let px = 14.0 * s;
@@ -591,6 +707,7 @@ impl Menu {
             font.horizontal_line_metrics(px),
             font.horizontal_line_metrics(small),
         ) else {
+            cv.clip = None;
             return;
         };
         let indent = if self.entries.iter().any(|e| matches!(e, Entry::Section(_))) {
@@ -602,7 +719,11 @@ impl Menu {
         let t = theme::current();
         let acc = t.accent;
         for (i, e) in self.entries.iter().enumerate() {
-            let iy = self.y as f32 + self.tops[i] * s;
+            let iy = self.y as f32 + self.tops[i] * s - self.scroll_y;
+            let eh = height(e) * s;
+            if iy + eh < self.y as f32 || iy > (self.y + self.h) as f32 {
+                continue;
+            }
             match e {
                 Entry::Separator => {
                     cv.fill_rect(
@@ -734,14 +855,39 @@ impl Menu {
             }
         }
 
+        cv.clip = None;
+
+        if self.content_h > self.h as f32 {
+            let track_y = self.y as f32 + MENU_PAD * s;
+            let track_h = self.h as f32 - 2.0 * MENU_PAD * s;
+            let ratio = (self.h as f32 / self.content_h).clamp(0.12, 1.0);
+            let thumb_h = (track_h * ratio).max(14.0 * s);
+            let max_scroll = (self.content_h - self.h as f32).max(1.0);
+            let thumb_y =
+                track_y + (track_h - thumb_h) * (self.scroll_y / max_scroll).clamp(0.0, 1.0);
+            let thumb_x = self.x as f32 + self.w as f32 - 4.5 * s;
+            let thumb_w = 2.5 * s;
+            cv.round_rect_alpha(thumb_x, thumb_y, thumb_w, thumb_h, 1.25 * s, t.dim, 0.45);
+        }
+
         if let Some(sub) = &self.submenu {
             let (sx, sy, sw, sh) = (sub.x as f32, sub.y as f32, sub.w as f32, sub.h as f32);
             surface(cv, sx, sy, sw, sh, R_MENU * s, s);
 
+            let sub_clip_x = sub.x;
+            let sub_clip_y = sub.y + (MENU_PAD * s).round() as i32;
+            let sub_clip_w = sub.w;
+            let sub_clip_h = (sub.h as f32 - 2.0 * MENU_PAD * s).round() as i32;
+            cv.clip = Some([sub_clip_x, sub_clip_y, sub_clip_w, sub_clip_h]);
+
             let six = sx + MENU_PAD * s;
             let siw = sw - 2.0 * MENU_PAD * s;
             for (i, e) in sub.entries.iter().enumerate() {
-                let siy = sy + sub.tops[i] * s;
+                let siy = sy + sub.tops[i] * s - sub.scroll_y;
+                let sih = height(e) * s;
+                if siy + sih < sy || siy > sy + sh {
+                    continue;
+                }
                 if let Entry::Item { label, checked, .. } = e {
                     let ih = ITEM_H * s;
                     let f = sub.fades[i].v;
@@ -763,6 +909,21 @@ impl Menu {
                     }
                     cv.text(font, label, six + 26.0 * s, baseline, px, t.text);
                 }
+            }
+
+            cv.clip = None;
+
+            if sub.content_h > sub.h as f32 {
+                let track_y = sy + MENU_PAD * s;
+                let track_h = sh - 2.0 * MENU_PAD * s;
+                let ratio = (sh / sub.content_h).clamp(0.12, 1.0);
+                let thumb_h = (track_h * ratio).max(14.0 * s);
+                let max_scroll = (sub.content_h - sh).max(1.0);
+                let thumb_y =
+                    track_y + (track_h - thumb_h) * (sub.scroll_y / max_scroll).clamp(0.0, 1.0);
+                let thumb_x = sx + sw - 4.5 * s;
+                let thumb_w = 2.5 * s;
+                cv.round_rect_alpha(thumb_x, thumb_y, thumb_w, thumb_h, 1.25 * s, t.dim, 0.45);
             }
         }
     }
@@ -796,10 +957,10 @@ mod tests {
 
         let inside_first = (menu.x as f64 + 10.0, menu.y as f64 + 10.0);
         assert!(menu.update_cursor(inside_first, &fonts));
-        assert!(menu.submenu.is_none(), "hover must not open dropdown");
+        assert!(menu.submenu.is_none());
 
         assert!(menu.handle_click(inside_first, &fonts));
-        assert!(menu.submenu.is_some(), "click must open dropdown");
+        assert!(menu.submenu.is_some());
 
         let (_bx2, _by2, _bw2, bh2) = menu.bounds();
         assert!(bh2 > bh1);
@@ -812,6 +973,32 @@ mod tests {
         assert!(matches!(act, Some(Action::SetTheme(_))));
 
         assert!(menu.handle_click(inside_first, &fonts));
-        assert!(menu.submenu.is_none(), "clicking again must close dropdown");
+        assert!(menu.submenu.is_none());
+    }
+
+    #[test]
+    fn test_context_menu_flips_near_bottom() {
+        let entries = context_entries(DeleteMode::Trash, false);
+        let menu = Menu::new(entries, (100, 580), (800, 600), 1.0, false);
+        assert!(menu.y < 580);
+        assert!(menu.y + menu.h <= 600);
+    }
+
+    #[test]
+    fn test_context_menu_flips_near_right() {
+        let entries = context_entries(DeleteMode::Trash, false);
+        let menu = Menu::new(entries, (780, 100), (800, 600), 1.0, false);
+        assert!(menu.x < 780);
+        assert!(menu.x + menu.w <= 800);
+    }
+
+    #[test]
+    fn test_context_menu_scroll_in_small_window() {
+        let entries = context_entries(DeleteMode::Trash, false);
+        let mut menu = Menu::new(entries, (50, 50), (300, 200), 1.0, false);
+        assert!(menu.h <= 200);
+        assert!(menu.content_h > menu.h as f32);
+        assert!(menu.scroll(-2.0));
+        assert!(menu.scroll_target > 0.0);
     }
 }

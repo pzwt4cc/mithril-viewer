@@ -8,6 +8,7 @@ pub struct Canvas<'a> {
     pub h: u32,
     pub ox: i32,
     pub oy: i32,
+    pub clip: Option<[i32; 4]>,
 }
 
 fn pack(c: Rgb) -> u32 {
@@ -16,11 +17,21 @@ fn pack(c: Rgb) -> u32 {
 
 impl Canvas<'_> {
     pub fn fill_rect(&mut self, x: i32, y: i32, w: i32, h: i32, c: Rgb) {
-        let (x, y) = (x - self.ox, y - self.oy);
+        let mut rx0 = x;
+        let mut ry0 = y;
+        let mut rx1 = x + w;
+        let mut ry1 = y + h;
+        if let Some([cx, cy, cw, ch]) = self.clip {
+            rx0 = rx0.max(cx);
+            ry0 = ry0.max(cy);
+            rx1 = rx1.min(cx + cw);
+            ry1 = ry1.min(cy + ch);
+        }
+        let (x, y) = (rx0 - self.ox, ry0 - self.oy);
         let x0 = x.max(0);
         let y0 = y.max(0);
-        let x1 = (x + w).min(self.w as i32);
-        let y1 = (y + h).min(self.h as i32);
+        let x1 = (rx1 - self.ox).min(self.w as i32);
+        let y1 = (ry1 - self.oy).min(self.h as i32);
         if x0 >= x1 || y0 >= y1 {
             return;
         }
@@ -32,6 +43,11 @@ impl Canvas<'_> {
     }
 
     pub fn blend(&mut self, x: i32, y: i32, c: Rgb, cov: f32) {
+        if let Some([cx, cy, cw, ch]) = self.clip
+            && (x < cx || y < cy || x >= cx + cw || y >= cy + ch)
+        {
+            return;
+        }
         let (x, y) = (x - self.ox, y - self.oy);
         if cov <= 0.0 || x < 0 || y < 0 || x >= self.w as i32 || y >= self.h as i32 {
             return;
@@ -227,3 +243,4 @@ pub fn wrap(font: &Fonts, s: &str, px: f32, max_w: f32) -> Vec<String> {
     }
     lines
 }
+
