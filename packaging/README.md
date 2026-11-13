@@ -5,7 +5,7 @@ Distribution packaging recipes and manifests for **Mithril Viewer** (`io.github.
 ## Structure
 
 - [`arch/`](arch/) — Arch Linux AUR package (`PKGBUILD` and `.SRCINFO`) for `mithril-viewer-git`
-- [`flatpak/`](flatpak/) — Flatpak / Flathub manifest (`io.github.pzwt4cc.Mithril.yml`), `flathub.json`, and offline Cargo dependency generator (`generate-cargo-sources.py`)
+- [`flatpak/`](flatpak/) — Flatpak / Flathub manifest (`io.github.pzwt4cc.Mithril.yml`), `flathub.json`, and offline Cargo dependency generator (`generate-cargo-sources.rs`)
 
 Future distribution formats (such as `appimage/`, `debian/`, or `rpm/`) belong in dedicated subdirectories alongside `arch/` and `flatpak/`.
 
