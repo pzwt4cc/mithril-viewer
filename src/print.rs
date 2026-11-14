@@ -183,10 +183,22 @@ pub fn print_image(img: &RgbaImage, title: &str) -> Result<bool, String> {
     let path = env::temp_dir().join(format!("mithril-print-{stamp}.pdf"));
     fs::write(&path, &pdf).map_err(|e| e.to_string())?;
 
-    let res = match try_portal(&path, title) {
-        PortalOutcome::Printed => Ok(true),
-        PortalOutcome::Cancelled => Ok(false),
-        PortalOutcome::Unavailable => try_native(&path),
+    let is_flatpak = Path::new("/.flatpak-info").exists();
+    let res = if is_flatpak {
+        match try_portal(&path, title) {
+            PortalOutcome::Printed => Ok(true),
+            PortalOutcome::Cancelled => Ok(false),
+            PortalOutcome::Unavailable => try_native(&path),
+        }
+    } else {
+        match try_native(&path) {
+            Ok(v) => Ok(v),
+            Err(_) => match try_portal(&path, title) {
+                PortalOutcome::Printed => Ok(true),
+                PortalOutcome::Cancelled => Ok(false),
+                PortalOutcome::Unavailable => Err("no print portal or lp available".into()),
+            },
+        }
     };
 
     let _ = fs::remove_file(&path);
