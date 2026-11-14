@@ -12,6 +12,7 @@ mod menu;
 mod modal;
 mod nav;
 mod prefetch;
+mod print;
 mod theme;
 mod ui;
 mod view;
@@ -1444,30 +1445,7 @@ impl App {
             .unwrap_or("Mithril")
             .to_string();
         std::thread::spawn(move || {
-            let res = (|| -> Result<bool, String> {
-                use std::io::Write;
-                let stamp = std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .map(|d| d.as_nanos())
-                    .unwrap_or(0);
-                let path = std::env::temp_dir().join(format!("mithril-print-{stamp}.png"));
-                {
-                    let file = std::fs::File::create(&path).map_err(|e| e.to_string())?;
-                    let mut w = std::io::BufWriter::new(file);
-                    let enc = image::codecs::png::PngEncoder::new_with_quality(
-                        &mut w,
-                        image::codecs::png::CompressionType::Fast,
-                        image::codecs::png::FilterType::NoFilter,
-                    );
-                    DynamicImage::ImageRgba8(img)
-                        .write_with_encoder(enc)
-                        .map_err(|e| e.to_string())?;
-                    w.flush().map_err(|e| e.to_string())?;
-                }
-                let print_res = run_system_print(&path, &title);
-                let _ = std::fs::remove_file(&path);
-                print_res
-            })();
+            let res = print::print_image(&img, &title);
             let _ = proxy.send_event(UserEvent::Printed(res));
         });
     }
@@ -2506,94 +2484,3 @@ fn main() {
     event_loop.run_app(&mut app).unwrap();
 }
 
-fn run_system_print(path: &std::path::Path, title: &str) -> Result<bool, String> {
-    const SCRIPT: &str = r#"
-import sys
-try:
-    import gi
-    gi.require_version('Gtk', '3.0')
-    from gi.repository import Gtk, Gdk, GdkPixbuf
-except Exception:
-    sys.exit(10)
-
-path = sys.argv[1]
-title = sys.argv[2] if len(sys.argv) > 2 else 'Mithril'
-
-try:
-    pixbuf = GdkPixbuf.Pixbuf.new_from_file(path)
-except Exception as e:
-    sys.stderr.write(f"{e}\n")
-    sys.exit(1)
-
-img_w, img_h = pixbuf.get_width(), pixbuf.get_height()
-op = Gtk.PrintOperation()
-op.set_job_name(title)
-op.set_n_pages(1)
-op.set_unit(Gtk.Unit.POINTS)
-op.set_embed_page_setup(True)
-
-def on_draw_page(operation, context, page_nr):
-    cr = context.get_cairo_context()
-    pw = context.get_width()
-    ph = context.get_height()
-    scale = min(pw / img_w, ph / img_h)
-    cr.translate((pw - img_w * scale) / 2.0, (ph - img_h * scale) / 2.0)
-    cr.scale(scale, scale)
-    Gdk.cairo_set_source_pixbuf(cr, pixbuf, 0, 0)
-    cr.paint()
-
-op.connect('draw_page', on_draw_page)
-res = op.run(Gtk.PrintOperationAction.PRINT_DIALOG, None)
-
-if res == Gtk.PrintOperationResult.APPLY:
-    sys.exit(0)
-elif res == Gtk.PrintOperationResult.CANCEL:
-    sys.exit(2)
-else:
-    sys.exit(1)
-"#;
-
-    if let Ok(out) = std::process::Command::new("python3")
-        .arg("-c")
-        .arg(SCRIPT)
-        .arg(path)
-        .arg(title)
-        .output()
-    {
-        match out.status.code() {
-            Some(0) => return Ok(true),
-            Some(2) => return Ok(false),
-            Some(10) => {}
-            _ => {
-                let err = String::from_utf8_lossy(&out.stderr).trim().to_string();
-                if !err.is_empty() {
-                    return Err(err);
-                }
-            }
-        }
-    }
-
-    if let Ok(out) = std::process::Command::new("gtklp").arg(path).output() {
-        if out.status.success() {
-            return Ok(true);
-        }
-        let err = String::from_utf8_lossy(&out.stderr).trim().to_string();
-        if !err.is_empty() {
-            return Err(err);
-        }
-        return Ok(false);
-    }
-
-    let out = std::process::Command::new("lp")
-        .arg("-o")
-        .arg("fit-to-page")
-        .arg(path)
-        .output()
-        .map_err(|e| e.to_string())?;
-
-    if out.status.success() {
-        Ok(true)
-    } else {
-        Err(String::from_utf8_lossy(&out.stderr).trim().to_string())
-    }
-}
