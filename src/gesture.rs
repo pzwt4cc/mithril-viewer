@@ -11,6 +11,8 @@ const TOUCH_SWIPE_PX: f64 = 48.0;
 const DOUBLE_CLICK_MS: u128 = 350;
 const DOUBLE_CLICK_DIST_PX: f64 = 8.0;
 const DRAG_SLOP_PX: f64 = 4.0;
+const CIRCLE_ROT_RAD: f32 = 3.6;
+const TWIST_ROT_RAD: f32 = 0.7;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum GestureAxis {
@@ -25,6 +27,7 @@ pub enum ScrollAction {
     Zoom(f32),
     Pan(f32, f32),
     Navigate(isize),
+    Rotate(bool),
 }
 
 pub struct ScrollTracker {
@@ -32,6 +35,9 @@ pub struct ScrollTracker {
     acc_x: f32,
     acc_y: f32,
     nav_triggered: bool,
+    prev_dir: Option<f32>,
+    acc_rot: f32,
+    rot_triggered: bool,
     last_event: Option<Instant>,
 }
 
@@ -48,6 +54,9 @@ impl ScrollTracker {
             acc_x: 0.0,
             acc_y: 0.0,
             nav_triggered: false,
+            prev_dir: None,
+            acc_rot: 0.0,
+            rot_triggered: false,
             last_event: None,
         }
     }
@@ -57,6 +66,9 @@ impl ScrollTracker {
         self.acc_x = 0.0;
         self.acc_y = 0.0;
         self.nav_triggered = false;
+        self.prev_dir = None;
+        self.acc_rot = 0.0;
+        self.rot_triggered = false;
         self.last_event = None;
     }
 
@@ -70,6 +82,7 @@ impl ScrollTracker {
         shift: bool,
         is_zoomed: bool,
         can_pan_x: bool,
+        can_pan_y: bool,
         allow_nav: bool,
         now: Instant,
     ) -> ScrollAction {
@@ -95,7 +108,8 @@ impl ScrollTracker {
         let in_smooth_gesture = self.axis != GestureAxis::Undecided
             || self.acc_x != 0.0
             || self.acc_y != 0.0
-            || self.nav_triggered;
+            || self.nav_triggered
+            || self.rot_triggered;
 
         if is_discrete_candidate && !in_smooth_gesture {
             if ctrl {
@@ -163,6 +177,39 @@ impl ScrollTracker {
             return action;
         }
 
+        if !is_zoomed && allow_nav && dx.hypot(dy) >= 0.5 {
+            let dir = dy.atan2(dx);
+            if let Some(prev) = self.prev_dir {
+                let mut diff = dir - prev;
+                while diff > std::f32::consts::PI {
+                    diff -= std::f32::consts::TAU;
+                }
+                while diff < -std::f32::consts::PI {
+                    diff += std::f32::consts::TAU;
+                }
+                self.acc_rot += diff;
+                if !self.rot_triggered {
+                    if self.acc_rot <= -CIRCLE_ROT_RAD {
+                        self.rot_triggered = true;
+                        self.nav_triggered = true;
+                        if ended {
+                            self.reset();
+                        }
+                        return ScrollAction::Rotate(true);
+                    }
+                    if self.acc_rot >= CIRCLE_ROT_RAD {
+                        self.rot_triggered = true;
+                        self.nav_triggered = true;
+                        if ended {
+                            self.reset();
+                        }
+                        return ScrollAction::Rotate(false);
+                    }
+                }
+            }
+            self.prev_dir = Some(dir);
+        }
+
         self.acc_x += dx;
         self.acc_y += dy;
 
@@ -174,15 +221,17 @@ impl ScrollTracker {
                     just_locked_horizontal = true;
                 } else {
                     self.axis = GestureAxis::Vertical;
-                    let total_y = self.acc_y;
+                    if is_zoomed && can_pan_y {
+                        let pan_y = self.acc_y;
+                        if ended {
+                            self.reset();
+                        }
+                        return ScrollAction::Pan(0.0, pan_y);
+                    }
                     if ended {
                         self.reset();
                     }
-                    return if total_y != 0.0 {
-                        ScrollAction::Zoom(total_y / TOUCHPAD_ZOOM_PX_PER_STEP)
-                    } else {
-                        ScrollAction::None
-                    };
+                    return ScrollAction::None;
                 }
             } else {
                 if ended {
@@ -194,8 +243,8 @@ impl ScrollTracker {
 
         let action = match self.axis {
             GestureAxis::Vertical => {
-                if dy != 0.0 {
-                    ScrollAction::Zoom(dy / TOUCHPAD_ZOOM_PX_PER_STEP)
+                if is_zoomed && can_pan_y && dy != 0.0 {
+                    ScrollAction::Pan(0.0, dy)
                 } else {
                     ScrollAction::None
                 }
@@ -212,7 +261,10 @@ impl ScrollTracker {
                     } else {
                         ScrollAction::None
                     }
-                } else if allow_nav && !self.nav_triggered && self.acc_x.abs() >= SWIPE_THRESHOLD_PX
+                } else if allow_nav
+                    && !self.nav_triggered
+                    && !self.rot_triggered
+                    && self.acc_x.abs() >= SWIPE_THRESHOLD_PX
                 {
                     self.nav_triggered = true;
                     ScrollAction::Navigate(if self.acc_x < 0.0 { 1 } else { -1 })
@@ -240,6 +292,7 @@ pub enum TouchAction {
         pan: (f32, f32),
     },
     Navigate(isize),
+    Rotate(bool),
 }
 
 pub struct TouchTracker {
@@ -247,6 +300,8 @@ pub struct TouchTracker {
     start_pos: (f64, f64),
     nav_triggered: bool,
     pinched: bool,
+    prev_angle: Option<f32>,
+    acc_rotation: f32,
 }
 
 impl Default for TouchTracker {
@@ -262,6 +317,8 @@ impl TouchTracker {
             start_pos: (0.0, 0.0),
             nav_triggered: false,
             pinched: false,
+            prev_angle: None,
+            acc_rotation: 0.0,
         }
     }
 
@@ -269,6 +326,8 @@ impl TouchTracker {
         self.points.clear();
         self.nav_triggered = false;
         self.pinched = false;
+        self.prev_angle = None;
+        self.acc_rotation = 0.0;
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -293,8 +352,13 @@ impl TouchTracker {
                     self.start_pos = pos;
                     self.nav_triggered = false;
                     self.pinched = false;
+                    self.prev_angle = None;
+                    self.acc_rotation = 0.0;
                 } else if self.points.len() >= 2 {
                     self.pinched = true;
+                    let a = self.points[0].1;
+                    let b = self.points[1].1;
+                    self.prev_angle = Some(((b.1 - a.1) as f32).atan2((b.0 - a.0) as f32));
                 }
                 TouchAction::None
             }
@@ -318,6 +382,30 @@ impl TouchTracker {
                         (new_mid.0 - prev_mid.0) as f32,
                         (new_mid.1 - prev_mid.1) as f32,
                     );
+
+                    let curr_angle = ((new_b.1 - new_a.1) as f32).atan2((new_b.0 - new_a.0) as f32);
+                    if let Some(prev) = self.prev_angle {
+                        let mut diff = curr_angle - prev;
+                        while diff > std::f32::consts::PI {
+                            diff -= std::f32::consts::TAU;
+                        }
+                        while diff < -std::f32::consts::PI {
+                            diff += std::f32::consts::TAU;
+                        }
+                        self.acc_rotation += diff;
+                        if self.acc_rotation >= TWIST_ROT_RAD {
+                            self.acc_rotation = 0.0;
+                            self.prev_angle = Some(curr_angle);
+                            return TouchAction::Rotate(true);
+                        }
+                        if self.acc_rotation <= -TWIST_ROT_RAD {
+                            self.acc_rotation = 0.0;
+                            self.prev_angle = Some(curr_angle);
+                            return TouchAction::Rotate(false);
+                        }
+                    }
+                    self.prev_angle = Some(curr_angle);
+
                     let steps = if prev_dist > 10.0 && new_dist > 10.0 {
                         (new_dist / prev_dist).ln() / zoom_step.ln()
                     } else {
@@ -352,6 +440,11 @@ impl TouchTracker {
                 if self.points.is_empty() {
                     self.pinched = false;
                     self.nav_triggered = false;
+                    self.prev_angle = None;
+                    self.acc_rotation = 0.0;
+                } else if self.points.len() == 1 {
+                    self.prev_angle = None;
+                    self.acc_rotation = 0.0;
                 }
                 TouchAction::None
             }
@@ -435,6 +528,7 @@ mod tests {
                 false,
                 false,
                 false,
+                false,
                 true,
                 t0,
             ),
@@ -446,6 +540,7 @@ mod tests {
                 MouseScrollDelta::PixelDelta(PhysicalPosition::new(-50.0, 2.0)),
                 TouchPhase::Moved,
                 2.0,
+                false,
                 false,
                 false,
                 false,
@@ -465,6 +560,7 @@ mod tests {
                 false,
                 false,
                 false,
+                false,
                 true,
                 t0 + Duration::from_millis(20),
             ),
@@ -476,6 +572,7 @@ mod tests {
                 MouseScrollDelta::PixelDelta(PhysicalPosition::new(-100.0, 0.0)),
                 TouchPhase::Moved,
                 2.0,
+                false,
                 false,
                 false,
                 false,
@@ -495,6 +592,7 @@ mod tests {
                 false,
                 false,
                 false,
+                false,
                 true,
                 t0 + Duration::from_millis(40),
             ),
@@ -510,6 +608,7 @@ mod tests {
                 false,
                 false,
                 false,
+                false,
                 true,
                 t0 + Duration::from_millis(60),
             ),
@@ -518,24 +617,41 @@ mod tests {
     }
 
     #[test]
-    fn touchpad_vertical_zoom_normalizes_for_hidpi() {
+    fn touchpad_vertical_scroll_does_not_zoom_unless_ctrl_is_held() {
         let mut t = ScrollTracker::new();
         let t0 = Instant::now();
 
+        assert_eq!(
+            t.handle(
+                MouseScrollDelta::PixelDelta(PhysicalPosition::new(2.0, 72.0)),
+                TouchPhase::Started,
+                2.0,
+                false,
+                false,
+                false,
+                false,
+                false,
+                true,
+                t0,
+            ),
+            ScrollAction::None
+        );
+
         let a = t.handle(
-            MouseScrollDelta::PixelDelta(PhysicalPosition::new(2.0, 72.0)),
-            TouchPhase::Started,
+            MouseScrollDelta::PixelDelta(PhysicalPosition::new(0.0, 72.0)),
+            TouchPhase::Moved,
             2.0,
+            true,
             false,
             false,
             false,
             false,
             true,
-            t0,
+            t0 + Duration::from_millis(16),
         );
         match a {
             ScrollAction::Zoom(steps) => assert!((steps - 0.5).abs() < 1e-4),
-            other => panic!("expected Zoom, got {other:?}"),
+            other => panic!("expected Zoom with Ctrl, got {other:?}"),
         }
     }
 
@@ -552,6 +668,7 @@ mod tests {
             false,
             true,
             true,
+            false,
             true,
             t0,
         );
@@ -559,52 +676,57 @@ mod tests {
     }
 
     #[test]
-    fn x11_smooth_scroll_resets_after_idle_gap() {
+    fn zoomed_vertical_scroll_pans_vertically() {
         let mut t = ScrollTracker::new();
         let t0 = Instant::now();
 
-        assert_eq!(
-            t.handle(
-                MouseScrollDelta::LineDelta(-0.8, 0.0),
-                TouchPhase::Moved,
+        let a = t.handle(
+            MouseScrollDelta::PixelDelta(PhysicalPosition::new(0.0, 40.0)),
+            TouchPhase::Started,
+            1.0,
+            false,
+            false,
+            true,
+            false,
+            true,
+            true,
+            t0,
+        );
+        assert_eq!(a, ScrollAction::Pan(0.0, 40.0));
+    }
+
+    #[test]
+    fn circular_scroll_gesture_rotates_clockwise() {
+        let mut t = ScrollTracker::new();
+        let t0 = Instant::now();
+        let steps = 32;
+        let mut rotated = false;
+        for i in 0..=steps {
+            let angle = (std::f32::consts::TAU * i as f32) / steps as f32;
+            let dx = 40.0 * ((-angle - 0.2).cos() - (-angle).cos());
+            let dy = 40.0 * ((-angle - 0.2).sin() - (-angle).sin());
+            let a = t.handle(
+                MouseScrollDelta::PixelDelta(PhysicalPosition::new(dx as f64, dy as f64)),
+                if i == 0 {
+                    TouchPhase::Started
+                } else {
+                    TouchPhase::Moved
+                },
                 1.0,
                 false,
                 false,
                 false,
                 false,
-                true,
-                t0,
-            ),
-            ScrollAction::None
-        );
-        assert_eq!(
-            t.handle(
-                MouseScrollDelta::LineDelta(-0.5, 0.0),
-                TouchPhase::Moved,
-                1.0,
-                false,
-                false,
-                false,
                 false,
                 true,
-                t0 + Duration::from_millis(16),
-            ),
-            ScrollAction::Navigate(1)
-        );
-        assert_eq!(
-            t.handle(
-                MouseScrollDelta::LineDelta(1.2, 0.0),
-                TouchPhase::Moved,
-                1.0,
-                false,
-                false,
-                false,
-                false,
-                true,
-                t0 + Duration::from_millis(250),
-            ),
-            ScrollAction::Navigate(-1)
-        );
+                t0 + Duration::from_millis(i as u64 * 16),
+            );
+            if a == ScrollAction::Rotate(true) {
+                rotated = true;
+                break;
+            }
+        }
+        assert!(rotated);
     }
 
     #[test]
@@ -621,6 +743,7 @@ mod tests {
                 false,
                 false,
                 false,
+                false,
                 true,
                 t0,
             ),
@@ -629,7 +752,7 @@ mod tests {
     }
 
     #[test]
-    fn touch_pinch_and_swipe() {
+    fn touch_pinch_and_swipe_and_twist() {
         let mut tt = TouchTracker::new();
         assert_eq!(
             tt.handle(
@@ -671,6 +794,28 @@ mod tests {
             TouchAction::PinchZoom { steps, .. } => assert!(steps > 1.5),
             other => panic!("expected PinchZoom, got {other:?}"),
         }
+
+        tt.reset();
+        tt.handle(
+            1,
+            TouchPhase::Started,
+            (100.0, 100.0),
+            1.0,
+            1.4,
+            false,
+            true,
+        );
+        tt.handle(
+            2,
+            TouchPhase::Started,
+            (200.0, 100.0),
+            1.0,
+            1.4,
+            false,
+            true,
+        );
+        let action = tt.handle(2, TouchPhase::Moved, (100.0, 200.0), 1.0, 1.4, false, true);
+        assert_eq!(action, TouchAction::Rotate(true));
     }
 
     #[test]

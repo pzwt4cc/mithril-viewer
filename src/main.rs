@@ -32,7 +32,7 @@ use image::{DynamicImage, ImageFormat, RgbaImage, imageops};
 use winit::{
     application::ApplicationHandler,
     dpi::LogicalSize,
-    event::{MouseButton, MouseScrollDelta, WindowEvent},
+    event::{MouseButton, MouseScrollDelta, TouchPhase, WindowEvent},
     event_loop::{ActiveEventLoop, ControlFlow, EventLoop, EventLoopProxy},
     keyboard::{KeyCode, PhysicalKey},
     window::{CursorIcon, Fullscreen, Icon, ResizeDirection, Window, WindowId},
@@ -297,6 +297,7 @@ struct App {
     scroll_tracker: ScrollTracker,
     touch_tracker: TouchTracker,
     click_tracker: ClickTracker,
+    gesture_rotation: f32,
 }
 
 impl App {
@@ -344,6 +345,7 @@ impl App {
             scroll_tracker: ScrollTracker::new(),
             touch_tracker: TouchTracker::new(),
             click_tracker: ClickTracker::new(),
+            gesture_rotation: 0.0,
             clipboard: None,
             exit_requested: false,
             picking: false,
@@ -2332,15 +2334,15 @@ impl ApplicationHandler<UserEvent> for App {
                     self.close_menu();
                     return;
                 }
-                let can_pan_x = self
+                let (can_pan_x, can_pan_y) = self
                     .layout()
                     .and_then(|lay| {
                         let (_, _, vw, vh) = lay.viewport();
                         self.image
                             .as_ref()
-                            .map(|img| self.view.can_pan(img.dimensions(), (vw, vh)).0)
+                            .map(|img| self.view.can_pan(img.dimensions(), (vw, vh)))
                     })
-                    .unwrap_or(false);
+                    .unwrap_or((false, false));
                 let allow_nav = !self.crop_active() && self.dialog.is_none() && self.menu.is_none();
                 match self.scroll_tracker.handle(
                     delta,
@@ -2350,12 +2352,14 @@ impl ApplicationHandler<UserEvent> for App {
                     self.shift,
                     self.view.is_zoomed(),
                     can_pan_x,
+                    can_pan_y,
                     allow_nav,
                     Instant::now(),
                 ) {
                     ScrollAction::Zoom(steps) => self.zoom_at_point(self.cursor, steps, false),
                     ScrollAction::Pan(dx, dy) => self.pan_by(dx, dy, true),
                     ScrollAction::Navigate(dir) => self.navigate(dir),
+                    ScrollAction::Rotate(cw) => self.rotate(cw),
                     ScrollAction::None => {}
                 }
             }
@@ -2411,7 +2415,27 @@ impl ApplicationHandler<UserEvent> for App {
                         }
                     }
                     TouchAction::Navigate(dir) => self.navigate(dir),
+                    TouchAction::Rotate(cw) => self.rotate(cw),
                     TouchAction::None => {}
+                }
+            }
+            WindowEvent::RotationGesture { delta, phase, .. } => {
+                if self.dialog.is_some() || self.crop_active() {
+                    return;
+                }
+                if phase == TouchPhase::Started {
+                    self.gesture_rotation = 0.0;
+                }
+                self.gesture_rotation += delta;
+                if self.gesture_rotation >= 35.0 {
+                    self.gesture_rotation = 0.0;
+                    self.rotate(true);
+                } else if self.gesture_rotation <= -35.0 {
+                    self.gesture_rotation = 0.0;
+                    self.rotate(false);
+                }
+                if matches!(phase, TouchPhase::Ended | TouchPhase::Cancelled) {
+                    self.gesture_rotation = 0.0;
                 }
             }
             WindowEvent::MouseInput {
@@ -2654,6 +2678,7 @@ impl ApplicationHandler<UserEvent> for App {
                 self.click_tracker.clear();
                 self.scroll_tracker.reset();
                 self.touch_tracker.reset();
+                self.gesture_rotation = 0.0;
                 if let Some(c) = &mut self.crop
                     && c.drag.is_some() {
                         c.drag = None;

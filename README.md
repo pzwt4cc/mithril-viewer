@@ -83,13 +83,13 @@ sudo gtk-update-icon-cache -f /usr/local/share/icons/hicolor 2>/dev/null || true
 
 | Key                              | Action                               |
 | -------------------------------- | ------------------------------------ |
-| `←` / `→`, `PageUp` / `PageDown`, touchpad two-finger horizontal swipe | Previous / next image |
-| Mouse wheel, touchpad two-finger vertical scroll / pinch, `+` / `-`  | Zoom at cursor / center |
+| `←` / `→`, `PageUp` / `PageDown`, two-finger horizontal swipe         | Previous / next image |
+| Pinch / spread fingers, mouse wheel, `Ctrl`+scroll, `+` / `-`        | Zoom at cursor / center |
 | Double-click / double-tap                                            | Toggle zoom (fit / 1:1+) |
-| Drag, `Shift` + two-finger scroll (when zoomed)                      | Pan image                |
+| Drag, two-finger scroll (when zoomed)                                | Pan image                |
+| `R` / `Shift+R`, two-finger circular gesture                          | Rotate clockwise / counter-clockwise |
 | `0`                                                                  | Reset zoom               |
-| `F11`                            | Toggle fullscreen                    |
-| `R` / `Shift+R`                  | Rotate clockwise / counter-clockwise |
+| `F11`                                                                | Toggle fullscreen        |
 | `Ctrl+R` / `Ctrl+Shift+R`        | Flip horizontally / vertically       |
 | `C`                              | Crop (`Enter` apply, `Esc` cancel)   |
 | `Ctrl+C`                         | Copy image to clipboard              |
