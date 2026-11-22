@@ -3,6 +3,7 @@ mod config;
 mod crop;
 mod draw;
 mod fonts;
+mod gesture;
 mod gpu;
 mod i18n;
 mod info;
@@ -45,6 +46,7 @@ use crop::{
 };
 use draw::{Canvas, ellipsize, text_width};
 use fonts::Fonts;
+use gesture::{ClickTracker, ScrollAction, ScrollTracker, TouchAction, TouchTracker};
 use gpu::Gpu;
 use i18n::tr;
 use info::Info;
@@ -196,6 +198,16 @@ fn is_nav_key(k: PhysicalKey) -> bool {
     )
 }
 
+fn is_repeat_key(k: PhysicalKey) -> bool {
+    is_nav_key(k)
+        || matches!(
+            k,
+            PhysicalKey::Code(
+                KeyCode::Equal | KeyCode::NumpadAdd | KeyCode::Minus | KeyCode::NumpadSubtract
+            )
+        )
+}
+
 fn edge_dir(p: (f64, f64), win: (u32, u32), b: f64) -> Option<ResizeDirection> {
     use ResizeDirection::*;
     let (l, r) = (p.0 < b, p.0 >= win.0 as f64 - b);
@@ -282,6 +294,9 @@ struct App {
     anim_active: bool,
     prefetcher: Prefetcher,
     nav_dir: isize,
+    scroll_tracker: ScrollTracker,
+    touch_tracker: TouchTracker,
+    click_tracker: ClickTracker,
 }
 
 impl App {
@@ -326,6 +341,9 @@ impl App {
             proxy: proxy.clone(),
             prefetcher: Prefetcher::new(proxy),
             nav_dir: 1,
+            scroll_tracker: ScrollTracker::new(),
+            touch_tracker: TouchTracker::new(),
+            click_tracker: ClickTracker::new(),
             clipboard: None,
             exit_requested: false,
             picking: false,
@@ -467,6 +485,8 @@ impl App {
                 self.cropped = false;
                 self.header_hide = Fade::new(0.0);
                 self.drag_hide = Fade::new(0.0);
+                self.dragging = false;
+                self.click_tracker.clear();
                 self.view = View::new(self.config.fit_to_window);
                 self.angle = Fade::new(0.0);
                 self.appear = Fade { v: 0.0, to: 1.0 };
@@ -870,13 +890,13 @@ impl App {
         }
     }
 
-    fn zoom_at_cursor(&mut self, steps: f32) {
+    fn zoom_at_point(&mut self, pos: (f64, f64), steps: f32, snap: bool) {
         let Some(lay) = self.layout() else { return };
         let Some(imgd) = self.image.as_ref().map(|i| i.dimensions()) else {
             return;
         };
         let (vx, vy, vw, vh) = lay.viewport();
-        let (px, py) = self.cursor;
+        let (px, py) = pos;
         if px < vx as f64
             || px >= (vx + vw as i32) as f64
             || py < vy as f64
@@ -892,6 +912,9 @@ impl App {
             fit_scale(imgd, vp)
         };
         let new = (old * ZOOM_STEP.powf(steps)).clamp(min, 32.0);
+        if (new - old).abs() <= old * 1e-5 && (self.view.zoom.is_none() || steps >= 0.0) {
+            return;
+        }
 
         let cx = px as f32 - (vx as f32 + vw as f32 / 2.0);
         let cy = py as f32 - (vy as f32 + vh as f32 / 2.0);
@@ -899,12 +922,56 @@ impl App {
         let ry = (cy - self.view.pan.1) / old;
 
         self.view.pan = (cx - rx * new, cy - ry * new);
-        self.view.zoom = if (new - min).abs() < 1e-3 {
+        self.view.zoom = if (steps <= 0.0 && new <= min * 1.002) || new <= min {
             None
         } else {
             Some(new)
         };
         self.view.clamp_pan(imgd, vp);
+        if snap {
+            self.view.cur_scale = self.view.scale(imgd, vp);
+            self.view.cur_pan = self.view.pan;
+        }
+        self.redraw();
+    }
+
+    fn zoom_at_center(&mut self, steps: f32) {
+        let Some(lay) = self.layout() else { return };
+        let (vx, vy, vw, vh) = lay.viewport();
+        let center = (
+            vx as f64 + vw as f64 * 0.5,
+            vy as f64 + vh as f64 * 0.5,
+        );
+        self.zoom_at_point(center, steps, false);
+    }
+
+    fn toggle_zoom_at(&mut self, pos: (f64, f64)) {
+        let Some(lay) = self.layout() else { return };
+        let Some(imgd) = self.image.as_ref().map(|i| i.dimensions()) else {
+            return;
+        };
+        if self.view.is_zoomed() {
+            self.view.reset();
+            self.redraw();
+            return;
+        }
+        let (_, _, vw, vh) = lay.viewport();
+        let old = self.view.scale(imgd, (vw, vh));
+        let target = (old * 2.2).clamp(1.0, 8.0);
+        if target <= old * 1.05 {
+            return;
+        }
+        let steps = (target / old).ln() / ZOOM_STEP.ln();
+        self.zoom_at_point(pos, steps, false);
+    }
+
+    fn pan_by(&mut self, dx: f32, dy: f32, immediate: bool) {
+        let Some(lay) = self.layout() else { return };
+        let Some(imgd) = self.image.as_ref().map(|i| i.dimensions()) else {
+            return;
+        };
+        let (_, _, vw, vh) = lay.viewport();
+        self.view.pan_by(dx, dy, imgd, (vw, vh), immediate);
         self.redraw();
     }
 
@@ -2090,7 +2157,7 @@ impl ApplicationHandler<UserEvent> for App {
                                 }
                             }
                         }
-                if event.repeat && !is_nav_key(event.physical_key) {
+                if event.repeat && !is_repeat_key(event.physical_key) {
                     return;
                 }
                 if self.dialog.is_some() {
@@ -2166,6 +2233,18 @@ impl ApplicationHandler<UserEvent> for App {
                         self.close_menu();
                         self.apply(Action::ResetZoom);
                     }
+                    PhysicalKey::Code(KeyCode::Equal | KeyCode::NumpadAdd)
+                        if self.crop.as_ref().is_none_or(|c| c.bar.editing.is_none()) =>
+                    {
+                        self.close_menu();
+                        self.zoom_at_center(0.65);
+                    }
+                    PhysicalKey::Code(KeyCode::Minus | KeyCode::NumpadSubtract)
+                        if self.crop.as_ref().is_none_or(|c| c.bar.editing.is_none()) =>
+                    {
+                        self.close_menu();
+                        self.zoom_at_center(-0.65);
+                    }
                     PhysicalKey::Code(KeyCode::KeyO) if self.ctrl && self.shift => {
                         self.pick_folder()
                     }
@@ -2231,14 +2310,15 @@ impl ApplicationHandler<UserEvent> for App {
                 self.sidebar_dirty = true;
                 self.redraw();
             }
-            WindowEvent::MouseWheel { delta, .. } => {
+            WindowEvent::MouseWheel { delta, phase, .. } => {
                 if self.dialog.is_some() {
                     return;
                 }
+                let scale = self.layout().map(|l| l.scale).unwrap_or(1.0).max(0.25);
                 if let Some(menu) = &mut self.menu {
                     let steps = match delta {
                         MouseScrollDelta::LineDelta(_, y) => y,
-                        MouseScrollDelta::PixelDelta(p) => p.y as f32 / 40.0,
+                        MouseScrollDelta::PixelDelta(p) => p.y as f32 / (36.0 * scale),
                     };
                     if menu.scroll(steps) {
                         menu.update_cursor(self.cursor, &self.font);
@@ -2252,11 +2332,105 @@ impl ApplicationHandler<UserEvent> for App {
                     self.close_menu();
                     return;
                 }
-                let steps = match delta {
-                    MouseScrollDelta::LineDelta(_, y) => y,
-                    MouseScrollDelta::PixelDelta(p) => p.y as f32 / 40.0,
-                };
-                self.zoom_at_cursor(steps);
+                let can_pan_x = self
+                    .layout()
+                    .and_then(|lay| {
+                        let (_, _, vw, vh) = lay.viewport();
+                        self.image
+                            .as_ref()
+                            .map(|img| self.view.can_pan(img.dimensions(), (vw, vh)).0)
+                    })
+                    .unwrap_or(false);
+                let allow_nav = !self.crop_active() && self.dialog.is_none() && self.menu.is_none();
+                match self.scroll_tracker.handle(
+                    delta,
+                    phase,
+                    scale,
+                    self.ctrl,
+                    self.shift,
+                    self.view.is_zoomed(),
+                    can_pan_x,
+                    allow_nav,
+                    Instant::now(),
+                ) {
+                    ScrollAction::Zoom(steps) => self.zoom_at_point(self.cursor, steps, false),
+                    ScrollAction::Pan(dx, dy) => self.pan_by(dx, dy, true),
+                    ScrollAction::Navigate(dir) => self.navigate(dir),
+                    ScrollAction::None => {}
+                }
+            }
+            WindowEvent::PinchGesture { delta, .. } => {
+                if self.dialog.is_some() || self.menu.is_some() {
+                    return;
+                }
+                if delta.is_finite() && delta != 0.0 {
+                    let factor = (1.0 + delta as f32).clamp(0.1, 10.0);
+                    let steps = factor.ln() / ZOOM_STEP.ln();
+                    if let Some(lay) = self.layout() {
+                        let (vx, vy, vw, vh) = lay.viewport();
+                        let (px, py) = self.cursor;
+                        let inside = px >= vx as f64
+                            && px < (vx + vw as i32) as f64
+                            && py >= vy as f64
+                            && py < (vy + vh as i32) as f64;
+                        let target = if inside {
+                            self.cursor
+                        } else {
+                            (vx as f64 + vw as f64 * 0.5, vy as f64 + vh as f64 * 0.5)
+                        };
+                        self.zoom_at_point(target, steps, false);
+                    }
+                }
+            }
+            WindowEvent::Touch(touch) => {
+                if self.dialog.is_some() || self.menu.is_some() {
+                    self.touch_tracker.reset();
+                    return;
+                }
+                let pos = (touch.location.x, touch.location.y);
+                if touch.phase == winit::event::TouchPhase::Started {
+                    self.cursor = pos;
+                }
+                let scale = self.layout().map(|l| l.scale).unwrap_or(1.0).max(0.25);
+                match self.touch_tracker.handle(
+                    touch.id,
+                    touch.phase,
+                    pos,
+                    scale,
+                    ZOOM_STEP,
+                    self.view.is_zoomed(),
+                    !self.crop_active(),
+                ) {
+                    TouchAction::Pan(dx, dy) => self.pan_by(dx, dy, true),
+                    TouchAction::PinchZoom { center, steps, pan } => {
+                        if pan.0 != 0.0 || pan.1 != 0.0 {
+                            self.pan_by(pan.0, pan.1, true);
+                        }
+                        if steps != 0.0 {
+                            self.zoom_at_point(center, steps, true);
+                        }
+                    }
+                    TouchAction::Navigate(dir) => self.navigate(dir),
+                    TouchAction::None => {}
+                }
+            }
+            WindowEvent::MouseInput {
+                state,
+                button: MouseButton::Back,
+                ..
+            } if state.is_pressed() => {
+                if self.dialog.is_none() && self.menu.is_none() {
+                    self.navigate(-1);
+                }
+            }
+            WindowEvent::MouseInput {
+                state,
+                button: MouseButton::Forward,
+                ..
+            } if state.is_pressed() => {
+                if self.dialog.is_none() && self.menu.is_none() {
+                    self.navigate(1);
+                }
             }
             WindowEvent::MouseInput {
                 state,
@@ -2285,6 +2459,9 @@ impl ApplicationHandler<UserEvent> for App {
                 ..
             } => {
                 if !state.is_pressed() {
+                    if self.dragging {
+                        self.click_tracker.on_release(self.cursor, Instant::now());
+                    }
                     self.dragging = false;
                     if let Some(c) = &mut self.crop
                         && c.drag.is_some() {
@@ -2294,6 +2471,7 @@ impl ApplicationHandler<UserEvent> for App {
                     return;
                 }
                 if self.dialog.is_some() {
+                    self.click_tracker.clear();
                     let action = self
                         .layout()
                         .and_then(|lay| self.dialog_local(&lay))
@@ -2304,6 +2482,7 @@ impl ApplicationHandler<UserEvent> for App {
                     return;
                 }
                 if let Some(menu) = &mut self.menu {
+                    self.click_tracker.clear();
                     if let Some(a) = menu.action_under(self.cursor) {
                         self.close_menu();
                         self.apply(a);
@@ -2326,6 +2505,7 @@ impl ApplicationHandler<UserEvent> for App {
                 if !window.is_maximized()
                     && window.fullscreen().is_none()
                     && let Some(dir) = edge_dir(self.cursor, lay.win, (EDGE * lay.scale) as f64) {
+                        self.click_tracker.clear();
                         let _ = window.drag_resize_window(dir);
                         return;
                     }
@@ -2392,32 +2572,61 @@ impl ApplicationHandler<UserEvent> for App {
                     return;
                 }
                 match lay.hit(self.cursor) {
-                    Some(Hit::Close) => self.request_exit(el),
-                    Some(Hit::Fullscreen) => self.toggle_fullscreen(),
-                    Some(Hit::Info) => self.toggle_sidebar(),
-                    Some(Hit::More) => self.open_settings(),
-                    Some(Hit::OpenFolder) => self.open_folder(),
-                    Some(Hit::Open | Hit::StartFolder) => self.pick_folder(),
-                    Some(Hit::Start) => self.pick_file(),
+                    Some(Hit::Close) => {
+                        self.click_tracker.clear();
+                        self.request_exit(el);
+                    }
+                    Some(Hit::Fullscreen) => {
+                        self.click_tracker.clear();
+                        self.toggle_fullscreen();
+                    }
+                    Some(Hit::Info) => {
+                        self.click_tracker.clear();
+                        self.toggle_sidebar();
+                    }
+                    Some(Hit::More) => {
+                        self.click_tracker.clear();
+                        self.open_settings();
+                    }
+                    Some(Hit::OpenFolder) => {
+                        self.click_tracker.clear();
+                        self.open_folder();
+                    }
+                    Some(Hit::Open | Hit::StartFolder) => {
+                        self.click_tracker.clear();
+                        self.pick_folder();
+                    }
+                    Some(Hit::Start) => {
+                        self.click_tracker.clear();
+                        self.pick_file();
+                    }
                     None if self.cursor.1 < lay.top_h as f64 && self.window.as_ref().is_some_and(|w| w.fullscreen().is_none()) => {
+                        self.click_tracker.clear();
                         let _ = window.drag_window();
                     }
                     None if self.cursor.0 < (lay.win.0 as i32 - lay.sidebar_w) as f64 => {
-                        self.dragging = true;
+                        if self.image.is_some()
+                            && !self.crop_active()
+                            && self.click_tracker.on_press(self.cursor, lay.scale, Instant::now())
+                        {
+                            self.toggle_zoom_at(self.cursor);
+                        } else {
+                            self.dragging = true;
+                        }
                     }
-                    None => {}
+                    None => {
+                        self.click_tracker.clear();
+                    }
                 }
             }
             WindowEvent::CursorMoved { position, .. } => {
                 let new = (position.x, position.y);
                 if self.dragging && self.image.is_some() {
+                    let scale = self.layout().map(|l| l.scale).unwrap_or(1.0);
+                    self.click_tracker.on_move(new, scale);
                     let dx = (new.0 - self.cursor.0) as f32;
                     let dy = (new.1 - self.cursor.1) as f32;
-                    self.view.pan.0 += dx;
-                    self.view.pan.1 += dy;
-                    self.view.cur_pan.0 += dx;
-                    self.view.cur_pan.1 += dy;
-                    self.redraw();
+                    self.pan_by(dx, dy, true);
                 }
                 self.cursor = new;
                 self.update_crop_drag();
@@ -2431,8 +2640,20 @@ impl ApplicationHandler<UserEvent> for App {
 
                 self.update_pointer();
             }
-            WindowEvent::CursorLeft { .. } | WindowEvent::Focused(false) => {
+            WindowEvent::CursorLeft { .. } => {
                 self.dragging = false;
+                self.click_tracker.clear();
+                if let Some(c) = &mut self.crop
+                    && c.drag.is_some() {
+                        c.drag = None;
+                        self.redraw();
+                    }
+            }
+            WindowEvent::Focused(false) => {
+                self.dragging = false;
+                self.click_tracker.clear();
+                self.scroll_tracker.reset();
+                self.touch_tracker.reset();
                 if let Some(c) = &mut self.crop
                     && c.drag.is_some() {
                         c.drag = None;

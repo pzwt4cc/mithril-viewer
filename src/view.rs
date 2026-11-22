@@ -23,6 +23,10 @@ impl View {
         }
     }
 
+    pub fn is_zoomed(&self) -> bool {
+        self.zoom.is_some()
+    }
+
     pub fn scale(&self, img: (u32, u32), vp: (u32, u32)) -> f32 {
         self.zoom.unwrap_or_else(|| {
             if self.fit_to_window {
@@ -38,12 +42,29 @@ impl View {
         self.pan = (0.0, 0.0);
     }
 
+    pub fn can_pan(&self, img: (u32, u32), vp: (u32, u32)) -> (bool, bool) {
+        let s = self.scale(img, vp);
+        (
+            img.0 as f32 * s - vp.0 as f32 > 0.5,
+            img.1 as f32 * s - vp.1 as f32 > 0.5,
+        )
+    }
+
     pub fn clamp_pan(&mut self, img: (u32, u32), vp: (u32, u32)) {
         let s = self.scale(img, vp);
         let max_x = ((img.0 as f32 * s - vp.0 as f32) / 2.0).max(0.0);
         let max_y = ((img.1 as f32 * s - vp.1 as f32) / 2.0).max(0.0);
         self.pan.0 = self.pan.0.clamp(-max_x, max_x);
         self.pan.1 = self.pan.1.clamp(-max_y, max_y);
+    }
+
+    pub fn pan_by(&mut self, dx: f32, dy: f32, img: (u32, u32), vp: (u32, u32), immediate: bool) {
+        self.pan.0 += dx;
+        self.pan.1 += dy;
+        self.clamp_pan(img, vp);
+        if immediate {
+            self.cur_pan = self.pan;
+        }
     }
 
     pub fn step(&mut self, img: (u32, u32), vp: (u32, u32), dt: f32, snap: bool) -> bool {
@@ -102,5 +123,14 @@ mod tests {
         let large = (1600, 1200);
         assert_eq!(fit_scale(large, vp), 0.5);
         assert_eq!(fill_scale(large, vp), 0.5);
+    }
+
+    #[test]
+    fn test_pan_by_clamps_within_bounds() {
+        let mut v = View::new(false);
+        v.zoom = Some(2.0);
+        v.pan_by(500.0, -500.0, (500, 400), (800, 600), true);
+        assert_eq!(v.pan, (100.0, -100.0));
+        assert_eq!(v.cur_pan, (100.0, -100.0));
     }
 }
