@@ -30,11 +30,20 @@ English · [Русский](README.ru.md)
 - **Smooth & fast:** GPU-accelerated rendering, cursor-centered zoom, drag to pan, `F11` fullscreen, and background preloading for neighbor images
 - **Quick edits:** rotate, flip horizontally/vertically, visual crop — originals are never overwritten (saves as a copy and warns before closing)
 - **Themes & UI:** dark, neutral, and light themes, adjustable window opacity, and 6 languages (English, Русский, Українська, Deutsch, Français, Español)
-- **Desktop integration:** drag & drop, clipboard copy, CUPS printing, move to trash or delete, and **Set as wallpaper** (Hyprland, Sway, swww/awww, feh, KDE Plasma, GNOME)
+- **Desktop integration:** drag & drop, clipboard copy, printing (XDG Print Portal / CUPS), move to trash or delete, and **Set as wallpaper** (XDG Wallpaper Portal, Hyprland, Sway, swww/awww, feh, KDE Plasma, GNOME)
 
 ## Installation
 
-### Flatpak (any Linux distro)
+### AppImage / Portable binary (any Linux distro)
+
+Download the latest `.AppImage` or `.tar.gz` (`x86_64` / `aarch64`) from [GitHub Releases](https://github.com/pzwt4cc/mithril-viewer/releases):
+
+```sh
+chmod +x Mithril-Viewer-*.AppImage
+./Mithril-Viewer-*.AppImage
+```
+
+### Flatpak
 
 Flatpak manifest and build instructions are in [`packaging/flatpak/README.md`](packaging/flatpak/README.md).
 
@@ -45,6 +54,10 @@ yay -S mithril-viewer-git
 ```
 
 Packaging files: [`packaging/arch/PKGBUILD`](packaging/arch/PKGBUILD).
+
+### Void Linux (`xbps-src`)
+
+Package template and step-by-step instructions (`glibc` and `musl`) are in [`packaging/void/README.md`](packaging/void/README.md) ([`packaging/void/template`](packaging/void/template)).
 
 ### Build from source
 

@@ -1,0 +1,150 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing release tag to build & publish (e.g. v0.1.0); leave empty to build artifacts only"
+        required: false
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build (${{ matrix.arch }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x86_64
+            runner: ubuntu-24.04
+            target: x86_64-unknown-linux-gnu
+          - arch: aarch64
+            runner: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-gnu
+
+    runs-on: ${{ matrix.runner }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag != '' && format('refs/tags/{0}', inputs.tag) || github.ref }}
+
+      - name: Overlay packaging/appimage from workflow branch if missing on tag
+        if: inputs.tag != ''
+        run: |
+          if [ ! -f packaging/appimage/build-appimage.sh ]; then
+            git fetch --depth 1 origin "${GITHUB_SHA}"
+            git checkout "${GITHUB_SHA}" -- packaging/appimage
+          fi
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            pkg-config \
+            libdav1d-dev \
+            file \
+            curl \
+            desktop-file-utils
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Cache Cargo dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+
+      - name: Run tests
+        run: cargo test --locked --target ${{ matrix.target }}
+
+      - name: Build release binary
+        run: cargo build --release --locked --target ${{ matrix.target }}
+
+      - name: Determine release version
+        id: meta
+        run: |
+          TAG_NAME="${{ inputs.tag || github.ref_name }}"
+          VERSION="${TAG_NAME#v}"
+          if [[ "$TAG_NAME" != v* ]]; then
+            VERSION="$(sed -n 's/^version = "\([^"]*\)"/\1/p' Cargo.toml | head -n1)"
+          fi
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+
+      - name: Build AppImage
+        env:
+          ARCH: ${{ matrix.arch }}
+          CARGO_TARGET: ${{ matrix.target }}
+          VERSION: ${{ steps.meta.outputs.version }}
+          SKIP_BUILD: "1"
+        run: |
+          chmod +x packaging/appimage/AppRun packaging/appimage/build-appimage.sh
+          ./packaging/appimage/build-appimage.sh
+
+      - name: Package portable tarball
+        env:
+          ARCH: ${{ matrix.arch }}
+          VERSION: ${{ steps.meta.outputs.version }}
+        run: |
+          PKG="mithril-viewer-${VERSION}-linux-${ARCH}"
+          STAGE="target/tarball/${PKG}"
+          APP_ID="io.github.pzwt4cc.mithril-viewer"
+          rm -rf "$STAGE"
+          install -Dm755 "target/${{ matrix.target }}/release/mithril-viewer" "${STAGE}/bin/mithril-viewer"
+          install -Dm644 "data/${APP_ID}.desktop" "${STAGE}/share/applications/${APP_ID}.desktop"
+          install -Dm644 "data/${APP_ID}.metainfo.xml" "${STAGE}/share/metainfo/${APP_ID}.metainfo.xml"
+          install -Dm644 "data/icons/hicolor/scalable/apps/${APP_ID}.svg" \
+            "${STAGE}/share/icons/hicolor/scalable/apps/${APP_ID}.svg"
+          for size in 16 24 32 48 64 128 256 512; do
+            install -Dm644 "data/icons/hicolor/${size}x${size}/apps/${APP_ID}.png" \
+              "${STAGE}/share/icons/hicolor/${size}x${size}/apps/${APP_ID}.png"
+          done
+          install -Dm644 LICENSE "${STAGE}/share/licenses/mithril-viewer/LICENSE"
+          install -Dm644 assets/fonts/OFL.txt "${STAGE}/share/licenses/mithril-viewer/OFL.txt"
+          tar -C target/tarball -czf "target/appimage/${PKG}.tar.gz" "${PKG}"
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist-${{ matrix.arch }}
+          path: |
+            target/appimage/*.AppImage
+            target/appimage/*.tar.gz
+
+  publish:
+    name: Publish GitHub Release
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v') || inputs.tag != ''
+    runs-on: ubuntu-24.04
+
+    steps:
+      - name: Download build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Generate SHA256SUMS
+        working-directory: dist
+        run: |
+          sha256sum *.AppImage *.tar.gz > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+
+      - name: Create or update GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ inputs.tag || github.ref_name }}
+          generate_release_notes: true
+          files: |
+            dist/*.AppImage
+            dist/*.tar.gz
+            dist/SHA256SUMS.txt

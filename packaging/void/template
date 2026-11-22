@@ -1,0 +1,28 @@
+# Template file for 'mithril-viewer'
+pkgname=mithril-viewer
+version=0.1.0
+revision=1
+build_style=cargo
+hostmakedepends="pkg-config"
+makedepends="libdav1d-devel"
+depends="fontconfig hicolor-icon-theme libX11 libglvnd libxkbcommon wayland"
+short_desc="Fast, minimal GPU-accelerated image viewer"
+maintainer="pzwt4cc <dotsenkoviktor8t@gmail.com>"
+license="MIT, OFL-1.1"
+homepage="https://github.com/pzwt4cc/mithril-viewer"
+distfiles="https://github.com/pzwt4cc/mithril-viewer/archive/refs/tags/v${version}.tar.gz"
+checksum=f5b9bd794969ee431c4553a12d26f3ae05b384085b3a267e6bb2dee7172f1531
+
+post_install() {
+	local appid="io.github.pzwt4cc.mithril-viewer"
+	vinstall "data/${appid}.desktop" 644 usr/share/applications
+	vinstall "data/${appid}.metainfo.xml" 644 usr/share/metainfo
+	vinstall "data/icons/hicolor/scalable/apps/${appid}.svg" 644 \
+		usr/share/icons/hicolor/scalable/apps
+	for size in 16 24 32 48 64 128 256 512; do
+		vinstall "data/icons/hicolor/${size}x${size}/apps/${appid}.png" 644 \
+			"usr/share/icons/hicolor/${size}x${size}/apps"
+	done
+	vlicense LICENSE
+	vlicense assets/fonts/OFL.txt
+}
