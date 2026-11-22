@@ -117,8 +117,8 @@ jobs:
         with:
           name: dist-${{ matrix.arch }}
           path: |
-            target/appimage/*.AppImage
-            target/appimage/*.tar.gz
+            target/appimage/Mithril-Viewer-*.AppImage
+            target/appimage/mithril-viewer-*.tar.gz
 
   publish:
     name: Publish GitHub Release
@@ -136,7 +136,7 @@ jobs:
       - name: Generate SHA256SUMS
         working-directory: dist
         run: |
-          sha256sum *.AppImage *.tar.gz > SHA256SUMS.txt
+          sha256sum Mithril-Viewer-*.AppImage mithril-viewer-*.tar.gz > SHA256SUMS.txt
           cat SHA256SUMS.txt
 
       - name: Create or update GitHub Release
@@ -145,6 +145,6 @@ jobs:
           tag_name: ${{ inputs.tag || github.ref_name }}
           generate_release_notes: true
           files: |
-            dist/*.AppImage
-            dist/*.tar.gz
+            dist/Mithril-Viewer-*.AppImage
+            dist/mithril-viewer-*.tar.gz
             dist/SHA256SUMS.txt

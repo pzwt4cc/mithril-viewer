@@ -65,9 +65,9 @@ if [[ -z "$APPIMAGETOOL" ]]; then
   if command -v appimagetool >/dev/null 2>&1; then
     APPIMAGETOOL="$(command -v appimagetool)"
   else
-    APPIMAGETOOL="${BUILD_DIR}/appimagetool-${ARCH}.AppImage"
+    APPIMAGETOOL="${BUILD_DIR}/tools/appimagetool-${ARCH}.AppImage"
     if [[ ! -x "$APPIMAGETOOL" ]]; then
-      mkdir -p "$BUILD_DIR"
+      mkdir -p "$(dirname "$APPIMAGETOOL")"
       curl -fsSL -o "$APPIMAGETOOL" \
         "https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-${ARCH}.AppImage"
       chmod +x "$APPIMAGETOOL"
