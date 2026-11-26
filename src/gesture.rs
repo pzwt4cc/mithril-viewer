@@ -1,25 +1,20 @@
 use std::time::{Duration, Instant};
 use winit::event::{MouseScrollDelta, TouchPhase};
 
-const IDLE_RESET: Duration = Duration::from_millis(180);
-const AXIS_SLOP_PX: f32 = 8.0;
-const AXIS_LOCK_RATIO: f32 = 1.25;
-const SWIPE_THRESHOLD_PX: f32 = 44.0;
+const IDLE_RESET: Duration = Duration::from_millis(160);
+const NAV_COOLDOWN: Duration = Duration::from_millis(240);
+const SWIPE_RATIO: f32 = 1.25;
+const SWIPE_THRESHOLD_PX: f32 = 48.0;
 const TOUCHPAD_ZOOM_PX_PER_STEP: f32 = 72.0;
 const LINE_TO_PX: f32 = 40.0;
 const TOUCH_SWIPE_PX: f64 = 48.0;
 const DOUBLE_CLICK_MS: u128 = 350;
 const DOUBLE_CLICK_DIST_PX: f64 = 8.0;
 const DRAG_SLOP_PX: f64 = 4.0;
-const CIRCLE_ROT_RAD: f32 = 3.6;
-const TWIST_ROT_RAD: f32 = 0.7;
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum GestureAxis {
-    Undecided,
-    Horizontal,
-    Vertical,
-}
+const TWIST_ROT_RAD: f32 = 0.75;
+const PINCH_ROT_LOCK_SCALE: f32 = 1.22;
+const PINCH_ZOOM_LOCK_DEG: f32 = 18.0;
+const PINCH_ROTATE_DEG: f32 = 42.0;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum ScrollAction {
@@ -27,17 +22,13 @@ pub enum ScrollAction {
     Zoom(f32),
     Pan(f32, f32),
     Navigate(isize),
-    Rotate(bool),
 }
 
 pub struct ScrollTracker {
-    axis: GestureAxis,
     acc_x: f32,
     acc_y: f32,
     nav_triggered: bool,
-    prev_dir: Option<f32>,
-    acc_rot: f32,
-    rot_triggered: bool,
+    last_nav: Option<Instant>,
     last_event: Option<Instant>,
 }
 
@@ -50,26 +41,24 @@ impl Default for ScrollTracker {
 impl ScrollTracker {
     pub fn new() -> Self {
         Self {
-            axis: GestureAxis::Undecided,
             acc_x: 0.0,
             acc_y: 0.0,
             nav_triggered: false,
-            prev_dir: None,
-            acc_rot: 0.0,
-            rot_triggered: false,
+            last_nav: None,
             last_event: None,
         }
     }
 
     pub fn reset(&mut self) {
-        self.axis = GestureAxis::Undecided;
         self.acc_x = 0.0;
         self.acc_y = 0.0;
         self.nav_triggered = false;
-        self.prev_dir = None;
-        self.acc_rot = 0.0;
-        self.rot_triggered = false;
         self.last_event = None;
+    }
+
+    pub fn reset_all(&mut self) {
+        self.reset();
+        self.last_nav = None;
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -97,19 +86,17 @@ impl ScrollTracker {
             }
         };
 
-        if phase == TouchPhase::Started
-            || self
-                .last_event
-                .is_some_and(|t| now.duration_since(t) >= IDLE_RESET)
+        if phase == TouchPhase::Started {
+            self.reset();
+            self.last_nav = None;
+        } else if self
+            .last_event
+            .is_some_and(|t| now.duration_since(t) >= IDLE_RESET)
         {
             self.reset();
         }
 
-        let in_smooth_gesture = self.axis != GestureAxis::Undecided
-            || self.acc_x != 0.0
-            || self.acc_y != 0.0
-            || self.nav_triggered
-            || self.rot_triggered;
+        let in_smooth_gesture = self.acc_x != 0.0 || self.acc_y != 0.0 || self.nav_triggered;
 
         if is_discrete_candidate && !in_smooth_gesture {
             if ctrl {
@@ -167,118 +154,231 @@ impl ScrollTracker {
 
         if shift {
             let action = if is_zoomed {
-                ScrollAction::Pan(dx, dy)
+                ScrollAction::Pan(
+                    if can_pan_x { dx } else { 0.0 },
+                    if can_pan_y { dy } else { 0.0 },
+                )
             } else {
                 ScrollAction::None
             };
             if ended {
                 self.reset();
             }
-            return action;
+            return if matches!(action, ScrollAction::Pan(0.0, 0.0)) {
+                ScrollAction::None
+            } else {
+                action
+            };
         }
 
-        if !is_zoomed && allow_nav && dx.hypot(dy) >= 0.5 {
-            let dir = dy.atan2(dx);
-            if let Some(prev) = self.prev_dir {
-                let mut diff = dir - prev;
-                while diff > std::f32::consts::PI {
-                    diff -= std::f32::consts::TAU;
-                }
-                while diff < -std::f32::consts::PI {
-                    diff += std::f32::consts::TAU;
-                }
-                self.acc_rot += diff;
-                if !self.rot_triggered {
-                    if self.acc_rot <= -CIRCLE_ROT_RAD {
-                        self.rot_triggered = true;
-                        self.nav_triggered = true;
-                        if ended {
-                            self.reset();
-                        }
-                        return ScrollAction::Rotate(true);
-                    }
-                    if self.acc_rot >= CIRCLE_ROT_RAD {
-                        self.rot_triggered = true;
-                        self.nav_triggered = true;
-                        if ended {
-                            self.reset();
-                        }
-                        return ScrollAction::Rotate(false);
-                    }
-                }
+        if is_zoomed {
+            let px = if can_pan_x { dx } else { 0.0 };
+            let py = if can_pan_y { dy } else { 0.0 };
+            if ended {
+                self.reset();
             }
-            self.prev_dir = Some(dir);
+            return if px != 0.0 || py != 0.0 {
+                ScrollAction::Pan(px, py)
+            } else {
+                ScrollAction::None
+            };
         }
 
         self.acc_x += dx;
         self.acc_y += dy;
 
-        let mut just_locked_horizontal = false;
-        if self.axis == GestureAxis::Undecided {
-            if self.acc_x.hypot(self.acc_y) >= AXIS_SLOP_PX {
-                if self.acc_x.abs() > self.acc_y.abs() * AXIS_LOCK_RATIO {
-                    self.axis = GestureAxis::Horizontal;
-                    just_locked_horizontal = true;
-                } else {
-                    self.axis = GestureAxis::Vertical;
-                    if is_zoomed && can_pan_y {
-                        let pan_y = self.acc_y;
-                        if ended {
-                            self.reset();
-                        }
-                        return ScrollAction::Pan(0.0, pan_y);
-                    }
-                    if ended {
-                        self.reset();
-                    }
-                    return ScrollAction::None;
-                }
-            } else {
-                if ended {
-                    self.reset();
-                }
-                return ScrollAction::None;
-            }
-        }
+        let cooldown_active = self
+            .last_nav
+            .is_some_and(|t| now.duration_since(t) < NAV_COOLDOWN);
 
-        let action = match self.axis {
-            GestureAxis::Vertical => {
-                if is_zoomed && can_pan_y && dy != 0.0 {
-                    ScrollAction::Pan(0.0, dy)
-                } else {
-                    ScrollAction::None
-                }
-            }
-            GestureAxis::Horizontal => {
-                if is_zoomed {
-                    if can_pan_x {
-                        let pan_x = if just_locked_horizontal {
-                            self.acc_x
-                        } else {
-                            dx
-                        };
-                        ScrollAction::Pan(pan_x, 0.0)
-                    } else {
-                        ScrollAction::None
-                    }
-                } else if allow_nav
-                    && !self.nav_triggered
-                    && !self.rot_triggered
-                    && self.acc_x.abs() >= SWIPE_THRESHOLD_PX
-                {
-                    self.nav_triggered = true;
-                    ScrollAction::Navigate(if self.acc_x < 0.0 { 1 } else { -1 })
-                } else {
-                    ScrollAction::None
-                }
-            }
-            GestureAxis::Undecided => ScrollAction::None,
+        let action = if allow_nav
+            && !self.nav_triggered
+            && !cooldown_active
+            && self.acc_x.abs() >= SWIPE_THRESHOLD_PX
+            && self.acc_x.abs() > self.acc_y.abs() * SWIPE_RATIO
+        {
+            self.nav_triggered = true;
+            self.last_nav = Some(now);
+            ScrollAction::Navigate(if self.acc_x < 0.0 { 1 } else { -1 })
+        } else {
+            ScrollAction::None
         };
 
         if ended {
             self.reset();
         }
         action
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct PinchOutput {
+    pub zoom_steps: f32,
+    pub pan: (f32, f32),
+    pub rotate: Option<bool>,
+}
+
+pub struct PinchTracker {
+    active: bool,
+    prev_scale: f32,
+    max_scale_ratio: f32,
+    acc_rot: f32,
+    rot_locked: bool,
+    zoom_locked: bool,
+}
+
+impl Default for PinchTracker {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl PinchTracker {
+    pub fn new() -> Self {
+        Self {
+            active: false,
+            prev_scale: 1.0,
+            max_scale_ratio: 1.0,
+            acc_rot: 0.0,
+            rot_locked: false,
+            zoom_locked: false,
+        }
+    }
+
+    pub fn begin(&mut self) {
+        self.active = true;
+        self.prev_scale = 1.0;
+        self.max_scale_ratio = 1.0;
+        self.acc_rot = 0.0;
+        self.rot_locked = false;
+        self.zoom_locked = false;
+    }
+
+    pub fn end(&mut self) {
+        self.active = false;
+        self.prev_scale = 1.0;
+        self.max_scale_ratio = 1.0;
+        self.acc_rot = 0.0;
+        self.rot_locked = false;
+        self.zoom_locked = false;
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn update(
+        &mut self,
+        dx: f32,
+        dy: f32,
+        scale: f32,
+        rotation: f32,
+        zoom_step: f32,
+        scale_factor: f32,
+        is_zoomed: bool,
+        allow_rotate: bool,
+    ) -> PinchOutput {
+        if !self.active {
+            self.begin();
+        }
+        if !scale.is_finite() || scale <= 0.05 {
+            return PinchOutput::default();
+        }
+        let ratio = scale.max(1.0 / scale);
+        if ratio > self.max_scale_ratio {
+            self.max_scale_ratio = ratio;
+        }
+        if !self.zoom_locked
+            && self.max_scale_ratio >= PINCH_ROT_LOCK_SCALE
+            && self.acc_rot.abs() < PINCH_ZOOM_LOCK_DEG
+        {
+            self.rot_locked = true;
+        }
+        if allow_rotate && !self.rot_locked && rotation.is_finite() {
+            self.acc_rot += rotation;
+            if self.acc_rot.abs() >= PINCH_ZOOM_LOCK_DEG && self.max_scale_ratio < 1.14 {
+                self.zoom_locked = true;
+            }
+            if self.acc_rot.abs() >= PINCH_ROTATE_DEG {
+                let cw = self.acc_rot > 0.0;
+                self.acc_rot = 0.0;
+                self.prev_scale = scale;
+                return PinchOutput {
+                    zoom_steps: 0.0,
+                    pan: (0.0, 0.0),
+                    rotate: Some(cw),
+                };
+            }
+        }
+        let zoom_steps = if !self.zoom_locked && self.prev_scale > 0.0 {
+            (scale / self.prev_scale).ln() / zoom_step.ln()
+        } else {
+            0.0
+        };
+        self.prev_scale = scale;
+        let sf = scale_factor.max(0.25);
+        let pan = if is_zoomed && !self.zoom_locked && dx.is_finite() && dy.is_finite() {
+            (dx * sf, dy * sf)
+        } else {
+            (0.0, 0.0)
+        };
+        PinchOutput {
+            zoom_steps,
+            pan,
+            rotate: None,
+        }
+    }
+}
+
+pub struct SwipeTracker {
+    active: bool,
+    acc_x: f32,
+    acc_y: f32,
+    triggered: bool,
+}
+
+impl Default for SwipeTracker {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl SwipeTracker {
+    pub fn new() -> Self {
+        Self {
+            active: false,
+            acc_x: 0.0,
+            acc_y: 0.0,
+            triggered: false,
+        }
+    }
+
+    pub fn begin(&mut self, fingers: u32) {
+        self.active = fingers >= 2;
+        self.acc_x = 0.0;
+        self.acc_y = 0.0;
+        self.triggered = false;
+    }
+
+    pub fn end(&mut self) {
+        self.active = false;
+        self.acc_x = 0.0;
+        self.acc_y = 0.0;
+        self.triggered = false;
+    }
+
+    pub fn update(&mut self, dx: f32, dy: f32, allow_nav: bool) -> Option<isize> {
+        if !self.active || self.triggered || !allow_nav {
+            return None;
+        }
+        if !dx.is_finite() || !dy.is_finite() {
+            return None;
+        }
+        self.acc_x += dx;
+        self.acc_y += dy;
+        if self.acc_x.abs() >= SWIPE_THRESHOLD_PX && self.acc_x.abs() > self.acc_y.abs() * 1.2 {
+            self.triggered = true;
+            Some(if self.acc_x < 0.0 { 1 } else { -1 })
+        } else {
+            None
+        }
     }
 }
 
@@ -617,6 +717,98 @@ mod tests {
     }
 
     #[test]
+    fn diagonal_start_followed_by_horizontal_swipe_still_navigates() {
+        let mut t = ScrollTracker::new();
+        let t0 = Instant::now();
+
+        assert_eq!(
+            t.handle(
+                MouseScrollDelta::PixelDelta(PhysicalPosition::new(-6.0, 6.0)),
+                TouchPhase::Started,
+                1.0,
+                false,
+                false,
+                false,
+                false,
+                false,
+                true,
+                t0,
+            ),
+            ScrollAction::None
+        );
+
+        assert_eq!(
+            t.handle(
+                MouseScrollDelta::PixelDelta(PhysicalPosition::new(-54.0, 2.0)),
+                TouchPhase::Moved,
+                1.0,
+                false,
+                false,
+                false,
+                false,
+                false,
+                true,
+                t0 + Duration::from_millis(12),
+            ),
+            ScrollAction::Navigate(1)
+        );
+    }
+
+    #[test]
+    fn swipe_cooldown_blocks_inertial_double_skip_without_started() {
+        let mut t = ScrollTracker::new();
+        let t0 = Instant::now();
+
+        assert_eq!(
+            t.handle(
+                MouseScrollDelta::PixelDelta(PhysicalPosition::new(-60.0, 0.0)),
+                TouchPhase::Moved,
+                1.0,
+                false,
+                false,
+                false,
+                false,
+                false,
+                true,
+                t0,
+            ),
+            ScrollAction::Navigate(1)
+        );
+
+        assert_eq!(
+            t.handle(
+                MouseScrollDelta::PixelDelta(PhysicalPosition::new(-60.0, 0.0)),
+                TouchPhase::Moved,
+                1.0,
+                false,
+                false,
+                false,
+                false,
+                false,
+                true,
+                t0 + Duration::from_millis(180),
+            ),
+            ScrollAction::None
+        );
+
+        assert_eq!(
+            t.handle(
+                MouseScrollDelta::PixelDelta(PhysicalPosition::new(-60.0, 0.0)),
+                TouchPhase::Moved,
+                1.0,
+                false,
+                false,
+                false,
+                false,
+                false,
+                true,
+                t0 + Duration::from_millis(450),
+            ),
+            ScrollAction::Navigate(1)
+        );
+    }
+
+    #[test]
     fn touchpad_vertical_scroll_does_not_zoom_unless_ctrl_is_held() {
         let mut t = ScrollTracker::new();
         let t0 = Instant::now();
@@ -656,77 +848,62 @@ mod tests {
     }
 
     #[test]
-    fn zoomed_horizontal_swipe_pans_when_wider_than_viewport() {
+    fn zoomed_two_finger_scroll_pans_in_2d() {
         let mut t = ScrollTracker::new();
         let t0 = Instant::now();
 
-        let a = t.handle(
-            MouseScrollDelta::PixelDelta(PhysicalPosition::new(-30.0, 2.0)),
-            TouchPhase::Started,
-            1.0,
-            false,
-            false,
-            true,
-            true,
-            false,
-            true,
-            t0,
-        );
-        assert_eq!(a, ScrollAction::Pan(-30.0, 0.0));
-    }
-
-    #[test]
-    fn zoomed_vertical_scroll_pans_vertically() {
-        let mut t = ScrollTracker::new();
-        let t0 = Instant::now();
-
-        let a = t.handle(
-            MouseScrollDelta::PixelDelta(PhysicalPosition::new(0.0, 40.0)),
-            TouchPhase::Started,
-            1.0,
-            false,
-            false,
-            true,
-            false,
-            true,
-            true,
-            t0,
-        );
-        assert_eq!(a, ScrollAction::Pan(0.0, 40.0));
-    }
-
-    #[test]
-    fn circular_scroll_gesture_rotates_clockwise() {
-        let mut t = ScrollTracker::new();
-        let t0 = Instant::now();
-        let steps = 32;
-        let mut rotated = false;
-        for i in 0..=steps {
-            let angle = (std::f32::consts::TAU * i as f32) / steps as f32;
-            let dx = 40.0 * ((-angle - 0.2).cos() - (-angle).cos());
-            let dy = 40.0 * ((-angle - 0.2).sin() - (-angle).sin());
-            let a = t.handle(
-                MouseScrollDelta::PixelDelta(PhysicalPosition::new(dx as f64, dy as f64)),
-                if i == 0 {
-                    TouchPhase::Started
-                } else {
-                    TouchPhase::Moved
-                },
+        assert_eq!(
+            t.handle(
+                MouseScrollDelta::PixelDelta(PhysicalPosition::new(-30.0, 2.0)),
+                TouchPhase::Started,
                 1.0,
                 false,
                 false,
+                true,
+                true,
                 false,
+                true,
+                t0,
+            ),
+            ScrollAction::Pan(-30.0, 0.0)
+        );
+
+        assert_eq!(
+            t.handle(
+                MouseScrollDelta::PixelDelta(PhysicalPosition::new(12.0, 40.0)),
+                TouchPhase::Moved,
+                1.0,
                 false,
                 false,
                 true,
-                t0 + Duration::from_millis(i as u64 * 16),
-            );
-            if a == ScrollAction::Rotate(true) {
-                rotated = true;
-                break;
-            }
-        }
-        assert!(rotated);
+                true,
+                true,
+                true,
+                t0 + Duration::from_millis(16),
+            ),
+            ScrollAction::Pan(12.0, 40.0)
+        );
+    }
+
+    #[test]
+    fn pinch_tracker_zooms_without_false_rotation_and_rotates_on_twist() {
+        let mut pt = PinchTracker::new();
+        pt.begin();
+        let out = pt.update(0.0, 0.0, 1.4, 8.0, 1.4, 2.0, false, true);
+        assert!((out.zoom_steps - 1.0).abs() < 1e-4);
+        assert_eq!(out.rotate, None);
+        let out2 = pt.update(0.0, 0.0, 1.96, 36.0, 1.4, 2.0, true, true);
+        assert!((out2.zoom_steps - 1.0).abs() < 1e-4);
+        assert_eq!(out2.rotate, None);
+        pt.end();
+
+        pt.begin();
+        let r1 = pt.update(0.0, 0.0, 1.02, 22.0, 1.4, 1.0, false, true);
+        assert_eq!(r1.rotate, None);
+        assert_eq!(r1.zoom_steps, 0.0);
+        let r2 = pt.update(0.0, 0.0, 1.03, 22.0, 1.4, 1.0, false, true);
+        assert_eq!(r2.rotate, Some(true));
+        pt.end();
     }
 
     #[test]

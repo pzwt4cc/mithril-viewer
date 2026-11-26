@@ -48,6 +48,7 @@ pub struct Layout {
     pub sidebar_w: i32,
     pub sidebar_full: i32,
     pub empty: bool,
+    pub header_visible: bool,
 }
 
 impl Layout {
@@ -60,6 +61,7 @@ impl Layout {
             sidebar_w: (full as f32 * frac).round() as i32,
             sidebar_full: full,
             empty: false,
+            header_visible: true,
         }
     }
 
@@ -238,17 +240,20 @@ impl Layout {
                 && p.1 >= r.1 as f64
                 && p.1 <= (r.1 + r.3) as f64
         };
-        if near(self.close_center()) {
-            Some(Hit::Close)
-        } else if near(self.more_center()) {
-            Some(Hit::More)
-        } else if near(self.info_center()) {
-            Some(Hit::Info)
-        } else if near(self.open_center()) {
-            Some(Hit::Open)
-        } else if !self.empty && near(self.fullscreen_center()) {
-            Some(Hit::Fullscreen)
-        } else if self.empty && inside(self.start_btn()) {
+        if self.header_visible {
+            if near(self.close_center()) {
+                return Some(Hit::Close);
+            } else if near(self.more_center()) {
+                return Some(Hit::More);
+            } else if near(self.info_center()) {
+                return Some(Hit::Info);
+            } else if near(self.open_center()) {
+                return Some(Hit::Open);
+            } else if !self.empty && near(self.fullscreen_center()) {
+                return Some(Hit::Fullscreen);
+            }
+        }
+        if self.empty && inside(self.start_btn()) {
             Some(Hit::Start)
         } else if self.empty && inside(self.start_btn2()) {
             Some(Hit::StartFolder)
@@ -261,3 +266,17 @@ impl Layout {
 }
 
 pub const EDGE: f32 = 5.0;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn hidden_header_disables_capsule_hits() {
+        let mut lay = Layout::new((1000, 720), 1.0, 0.0);
+        let close = lay.close_center();
+        assert!(lay.hit((close.0 as f64, close.1 as f64)) == Some(Hit::Close));
+        lay.header_visible = false;
+        assert!(lay.hit((close.0 as f64, close.1 as f64)).is_none());
+    }
+}

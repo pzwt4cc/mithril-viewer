@@ -18,6 +18,7 @@ mod theme;
 mod ui;
 mod view;
 mod wallpaper;
+mod wayland_gestures;
 
 use std::{
     borrow::Cow,
@@ -46,7 +47,7 @@ use crop::{
 };
 use draw::{Canvas, ellipsize, text_width};
 use fonts::Fonts;
-use gesture::{ClickTracker, ScrollAction, ScrollTracker, TouchAction, TouchTracker};
+use gesture::{ClickTracker, PinchTracker, ScrollAction, ScrollTracker, SwipeTracker, TouchAction, TouchTracker};
 use gpu::Gpu;
 use i18n::tr;
 use info::Info;
@@ -57,6 +58,7 @@ use modal::{BarAction, CropBar, CropField, Dialog, DialogAction};
 use nav::first_image;
 use ui::{draw_header, draw_sidebar, draw_start};
 use view::{View, fill_scale, fit_scale};
+use wayland_gestures::{GestureEvent, WaylandGestures};
 
 const APP_ID: &str = "io.github.pzwt4cc.mithril-viewer";
 
@@ -138,6 +140,7 @@ enum UserEvent {
     PickedFolder(Option<PathBuf>),
     Prefetched(u64, PathBuf, Box<loader::Loaded>),
     Wallpaper(Result<bool, String>),
+    WaylandGesture(GestureEvent),
 }
 
 enum After {
@@ -257,7 +260,10 @@ struct App {
     ctrl: bool,
     side: Fade,
     header_hide: Fade,
+    sidebar_hide: Fade,
     drag_hide: Fade,
+    header_hidden: bool,
+    alt_pending: bool,
     hover: Option<Hit>,
     fades: [Fade; 8],
     appear: Fade,
@@ -295,9 +301,12 @@ struct App {
     prefetcher: Prefetcher,
     nav_dir: isize,
     scroll_tracker: ScrollTracker,
+    pinch_tracker: PinchTracker,
+    swipe_tracker: SwipeTracker,
     touch_tracker: TouchTracker,
     click_tracker: ClickTracker,
     gesture_rotation: f32,
+    wayland_gestures: Option<WaylandGestures>,
 }
 
 impl App {
@@ -322,7 +331,10 @@ impl App {
             ctrl: false,
             side: Fade::new(0.0),
             header_hide: Fade::new(0.0),
+            sidebar_hide: Fade::new(0.0),
             drag_hide: Fade::new(0.0),
+            header_hidden: false,
+            alt_pending: false,
             hover: None,
             fades: [Fade::new(0.0); 8],
             appear: Fade { v: 0.0, to: 1.0 },
@@ -343,9 +355,12 @@ impl App {
             prefetcher: Prefetcher::new(proxy),
             nav_dir: 1,
             scroll_tracker: ScrollTracker::new(),
+            pinch_tracker: PinchTracker::new(),
+            swipe_tracker: SwipeTracker::new(),
             touch_tracker: TouchTracker::new(),
             click_tracker: ClickTracker::new(),
             gesture_rotation: 0.0,
+            wayland_gestures: None,
             clipboard: None,
             exit_requested: false,
             picking: false,
@@ -383,6 +398,15 @@ impl App {
         self.redraw();
     }
 
+    fn toggle_header(&mut self) {
+        self.header_hidden = !self.header_hidden;
+        if self.header_hidden && self.settings_open {
+            self.close_menu();
+        }
+        self.update_pointer();
+        self.redraw();
+    }
+
     fn toggle_fullscreen(&mut self) {
         let Some(win) = &self.window else { return };
         if win.fullscreen().is_some() {
@@ -412,6 +436,7 @@ impl App {
             self.side.v,
         );
         lay.empty = self.image.is_none();
+        lay.header_visible = !self.header_hidden && !self.crop_active();
         Some(lay)
     }
 
@@ -485,7 +510,6 @@ impl App {
                 self.rotation = 0;
                 self.flipped = false;
                 self.cropped = false;
-                self.header_hide = Fade::new(0.0);
                 self.drag_hide = Fade::new(0.0);
                 self.dragging = false;
                 self.click_tracker.clear();
@@ -1519,6 +1543,77 @@ impl App {
         });
     }
 
+    fn handle_wayland_gesture(&mut self, ev: GestureEvent) {
+        match ev {
+            GestureEvent::PinchBegin => {
+                self.pinch_tracker.begin();
+            }
+            GestureEvent::PinchEnd => {
+                self.pinch_tracker.end();
+            }
+            GestureEvent::PinchUpdate {
+                dx,
+                dy,
+                scale,
+                rotation,
+            } => {
+                if self.dialog.is_some() || self.menu.is_some() {
+                    return;
+                }
+                let Some(lay) = self.layout() else { return };
+                let out = self.pinch_tracker.update(
+                    dx,
+                    dy,
+                    scale,
+                    rotation,
+                    ZOOM_STEP,
+                    lay.scale,
+                    self.view.is_zoomed(),
+                    !self.crop_active(),
+                );
+                if let Some(cw) = out.rotate {
+                    self.rotate(cw);
+                    return;
+                }
+                if out.pan.0 != 0.0 || out.pan.1 != 0.0 {
+                    self.pan_by(out.pan.0, out.pan.1, true);
+                }
+                if out.zoom_steps != 0.0 {
+                    let (vx, vy, vw, vh) = lay.viewport();
+                    let (px, py) = self.cursor;
+                    let inside = px >= vx as f64
+                        && px < (vx + vw as i32) as f64
+                        && py >= vy as f64
+                        && py < (vy + vh as i32) as f64;
+                    let target = if inside {
+                        self.cursor
+                    } else {
+                        (vx as f64 + vw as f64 * 0.5, vy as f64 + vh as f64 * 0.5)
+                    };
+                    self.zoom_at_point(target, out.zoom_steps, true);
+                }
+            }
+            GestureEvent::SwipeBegin { fingers } => {
+                self.swipe_tracker.begin(fingers);
+            }
+            GestureEvent::SwipeEnd => {
+                self.swipe_tracker.end();
+            }
+            GestureEvent::SwipeUpdate { dx, dy } => {
+                if self.dialog.is_some()
+                    || self.menu.is_some()
+                    || self.crop_active()
+                    || self.view.is_zoomed()
+                {
+                    return;
+                }
+                if let Some(dir) = self.swipe_tracker.update(dx, dy, true) {
+                    self.navigate(dir);
+                }
+            }
+        }
+    }
+
     fn draw_ratios(&self, cv: &mut Canvas, lay: &Layout) {
         let Some(c) = &self.crop else { return };
         let (x, y, w, h, _) = lay.ratio_panel();
@@ -1548,8 +1643,16 @@ impl App {
             busy = true;
             self.header_dirty = true;
         }
-        self.header_hide.to = if self.crop_active() { 1.0 } else { 0.0 };
+        self.header_hide.to = if self.crop_active() || self.header_hidden {
+            1.0
+        } else {
+            0.0
+        };
         if self.header_hide.step(dt, 20.0) {
+            busy = true;
+        }
+        self.sidebar_hide.to = if self.crop_active() { 1.0 } else { 0.0 };
+        if self.sidebar_hide.step(dt, 20.0) {
             busy = true;
         }
         let is_crop_dragging = self.crop.as_ref().is_some_and(|c| c.drag.is_some());
@@ -1947,16 +2050,17 @@ impl App {
         if let Some((ex, ey)) = empty_pos {
             gpu.draw_overlay(gpu::EMPTY, ex, ey, 1.0);
         }
-        let h_alpha = 1.0 - self.header_hide.v;
-        if lay.sidebar_w > 0 && h_alpha > 0.001 {
-            let s_shift = (self.header_hide.v * lay.sidebar_w as f32).round() as i32;
+        let s_alpha = 1.0 - self.sidebar_hide.v;
+        if lay.sidebar_w > 0 && s_alpha > 0.001 {
+            let s_shift = (self.sidebar_hide.v * lay.sidebar_w as f32).round() as i32;
             gpu.draw_overlay(
                 gpu::SIDEBAR,
                 w as i32 - lay.sidebar_w + s_shift,
                 lay.side_oy(),
-                h_alpha,
+                s_alpha,
             );
         }
+        let h_alpha = 1.0 - self.header_hide.v;
         if h_alpha > 0.001 {
             let h_lift = -((self.header_hide.v * lay.top_h as f32).round() as i32);
             gpu.draw_overlay(gpu::HEADER, 0, h_lift, h_alpha);
@@ -2054,6 +2158,11 @@ impl ApplicationHandler<UserEvent> for App {
                 if let Some(img) = &self.image {
                     gpu.set_image(img);
                 }
+                self.wayland_gestures = wayland_gestures::start(
+                    &window,
+                    self.proxy.clone(),
+                    UserEvent::WaylandGesture,
+                );
                 window.request_redraw();
                 self.window = Some(window);
                 self.gpu = Some(gpu);
@@ -2107,10 +2216,12 @@ impl ApplicationHandler<UserEvent> for App {
                     self.show_toast(msg);
                 }
             },
+            UserEvent::WaylandGesture(ev) => self.handle_wayland_gesture(ev),
         }
     }
 
     fn exiting(&mut self, _el: &ActiveEventLoop) {
+        self.wayland_gestures = None;
         self.prefetcher.shutdown();
         self.gpu = None;
         self.window = None;
@@ -2140,7 +2251,28 @@ impl ApplicationHandler<UserEvent> for App {
                 self.shift = m.state().shift_key();
                 self.ctrl = m.state().control_key();
             }
-            WindowEvent::KeyboardInput { event, .. } if event.state.is_pressed() => {
+            WindowEvent::KeyboardInput { event, .. } => {
+                let is_alt = matches!(
+                    event.physical_key,
+                    PhysicalKey::Code(KeyCode::AltLeft | KeyCode::AltRight)
+                );
+                if !event.state.is_pressed() {
+                    if is_alt && self.alt_pending {
+                        self.alt_pending = false;
+                        if self.dialog.is_none() && !self.crop_active() {
+                            self.close_menu();
+                            self.toggle_header();
+                        }
+                    }
+                    return;
+                }
+                if is_alt {
+                    if !event.repeat {
+                        self.alt_pending = true;
+                    }
+                    return;
+                }
+                self.alt_pending = false;
                 if let Some(c) = &mut self.crop
                     && let Some(field) = c.bar.editing
                         && let Some(txt) = event.text.as_ref() {
@@ -2359,7 +2491,6 @@ impl ApplicationHandler<UserEvent> for App {
                     ScrollAction::Zoom(steps) => self.zoom_at_point(self.cursor, steps, false),
                     ScrollAction::Pan(dx, dy) => self.pan_by(dx, dy, true),
                     ScrollAction::Navigate(dir) => self.navigate(dir),
-                    ScrollAction::Rotate(cw) => self.rotate(cw),
                     ScrollAction::None => {}
                 }
             }
@@ -2482,6 +2613,9 @@ impl ApplicationHandler<UserEvent> for App {
                 button: MouseButton::Left,
                 ..
             } => {
+                if state.is_pressed() {
+                    self.alt_pending = false;
+                }
                 if !state.is_pressed() {
                     if self.dragging {
                         self.click_tracker.on_release(self.cursor, Instant::now());
@@ -2624,7 +2758,7 @@ impl ApplicationHandler<UserEvent> for App {
                         self.click_tracker.clear();
                         self.pick_file();
                     }
-                    None if self.cursor.1 < lay.top_h as f64 && self.window.as_ref().is_some_and(|w| w.fullscreen().is_none()) => {
+                    None if (lay.header_visible || !self.view.is_zoomed()) && self.cursor.1 < lay.top_h as f64 && self.window.as_ref().is_some_and(|w| w.fullscreen().is_none()) => {
                         self.click_tracker.clear();
                         let _ = window.drag_window();
                     }
@@ -2674,9 +2808,12 @@ impl ApplicationHandler<UserEvent> for App {
                     }
             }
             WindowEvent::Focused(false) => {
+                self.alt_pending = false;
                 self.dragging = false;
                 self.click_tracker.clear();
-                self.scroll_tracker.reset();
+                self.scroll_tracker.reset_all();
+                self.pinch_tracker.end();
+                self.swipe_tracker.end();
                 self.touch_tracker.reset();
                 self.gesture_rotation = 0.0;
                 if let Some(c) = &mut self.crop

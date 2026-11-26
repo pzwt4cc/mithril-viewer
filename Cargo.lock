@@ -1574,6 +1574,8 @@ dependencies = [
  "resvg",
  "rfd",
  "trash",
+ "wayland-client",
+ "wayland-protocols",
  "winit",
 ]
 

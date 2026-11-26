@@ -96,6 +96,7 @@ sudo gtk-update-icon-cache -f /usr/local/share/icons/hicolor 2>/dev/null || true
 | `Ctrl+P`                         | Print                                |
 | `Delete`                         | Delete image                         |
 | `I`                              | Toggle info panel                    |
+| `Alt`                            | Show / hide top bar (filename & buttons) |
 | `Esc`                            | Close menu / cancel crop / quit      |
 
 Right-click anywhere on the image for the context menu, or click `⋯` in the top-right corner for settings.
